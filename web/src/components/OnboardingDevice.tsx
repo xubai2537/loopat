@@ -8,6 +8,20 @@ import { useEffect, useRef, useState } from "react"
 import { deviceStart, devicePoll, getOnboarding, type OnboardingStatus } from "../api"
 import { PersonalRepoPanel } from "./dialog/PersonalRepoPanel"
 
+// navigator.clipboard is undefined over http://<ip> (non-secure context); fall
+// back to a hidden textarea + execCommand so copy works there too.
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true }
+  } catch {}
+  try {
+    const ta = document.createElement("textarea")
+    ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px"
+    document.body.appendChild(ta); ta.focus(); ta.select()
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return ok
+  } catch { return false }
+}
+
 export function OnboardingDevice({
   show,
   onAdvance,
@@ -28,7 +42,7 @@ export function OnboardingDevice({
     if ("error" in r) { setError(r.error); return }
     setCode(r)
     setWaiting(true)
-    window.open(r.verification_uri, "_blank", "noreferrer")
+    // Don't auto-jump — show the code first, let the user open GitHub when ready.
     poll(r.device_code, r.interval)
   }
 
@@ -65,19 +79,26 @@ export function OnboardingDevice({
         </button>
       ) : (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-gray-600">
-            浏览器已打开 <a href={code.verification_uri} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800">{code.verification_uri}</a>，输入下面的码并同意:
-          </p>
+          <p className="text-sm text-gray-600">1. 记下/复制这个码:</p>
           <div className="flex items-center gap-3">
             <code className="text-2xl font-mono tracking-widest bg-gray-50 border border-gray-200 rounded px-4 py-2">{code.user_code}</code>
             <button
-              onClick={() => { navigator.clipboard.writeText(code.user_code); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
+              onClick={async () => { if (await copyText(code.user_code)) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }}
               className="text-xs text-gray-500 hover:text-gray-800"
             >
               {copied ? "已复制" : "复制"}
             </button>
           </div>
-          {waiting && <p className="text-xs text-gray-400">等待授权…授权后会让你选个人仓库。</p>}
+          <p className="text-sm text-gray-600">2. 打开 GitHub 输码授权,完成后<b>回到本标签页</b>,会自动继续:</p>
+          <a
+            href={code.verification_uri}
+            target="_blank"
+            rel="noreferrer"
+            className="w-fit px-4 h-9 inline-flex items-center rounded text-sm bg-gray-900 text-white hover:bg-gray-700"
+          >
+            打开 GitHub 授权 →
+          </a>
+          {waiting && <p className="text-xs text-gray-400">⏳ 等待授权…授权后回到这里,会自动让你选个人仓库,别关页面。</p>}
         </div>
       )}
 

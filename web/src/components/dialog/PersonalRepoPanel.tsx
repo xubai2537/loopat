@@ -265,6 +265,16 @@ export function PersonalRepoPanel({ onDone, initialToken }: { onDone?: () => voi
           Keychain). To later restore on a new host, paste this same value into the
           Recovery field on the new host's Personal repo settings.
         </div>
+        {ghRepoWebUrl && (
+          <a
+            href={ghRepoWebUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] text-blue-600 hover:underline break-all w-fit"
+          >
+            你的个人仓库: {ghRepoWebUrl} ↗
+          </a>
+        )}
         <div className="text-[11px] text-emerald-700 leading-relaxed bg-emerald-50 border border-emerald-200 rounded p-2">
           <b>Next:</b> if your providers need API keys, add them in{" "}
           <b>Settings → Providers</b> to start chatting.

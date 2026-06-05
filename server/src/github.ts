@@ -52,12 +52,12 @@ function fail(op: string, r: { status: number; data: any }): never {
  * OAuth Device Flow — login on localhost/cloud/any deployment without a per-user
  * app or a callback URL. One public client_id (NOT a secret — like gh CLI) is
  * baked in, overridable via LOOPAT_GITHUB_CLIENT_ID for self-hosters with their
- * own app. Scopes: `repo` (create the private personal repo) + `admin:public_key`
- * (register the runtime ssh key). The token lands in the vault; from there
- * onboarding is identical to a pasted PAT.
+ * own app. Scope: `repo` only — list/create/clone/push private repos; git is
+ * over https-token so no ssh-key scope is needed. The token lands in the vault;
+ * from there onboarding is identical to a pasted PAT.
  */
 export const GITHUB_DEVICE_CLIENT_ID = process.env.LOOPAT_GITHUB_CLIENT_ID || "Ov23lijopFG81cPZXsI2"
-export const GITHUB_DEVICE_SCOPE = "repo,admin:public_key"
+export const GITHUB_DEVICE_SCOPE = "repo"
 
 /** Step 1: request a device code. Returns the code to show + how long to poll. */
 export async function requestDeviceCode(): Promise<{
