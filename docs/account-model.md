@@ -16,7 +16,7 @@ status: design doc — NOT IMPLEMENTED (reverted 2026-05-27)
 
 | OA 系统 | 个人侧 | 非个人侧 | 负责机制 |
 |---|---|---|---|
-| **Alibaba SSO** | 工号 / 员工账号 | 业务系统账号、服务账号 | 工号挂多业务账号 |
+| **Corp SSO** | employee ID / staff account | 业务系统账号、服务账号 | employee ID挂多业务账号 |
 | **钉钉** | 个人钉钉号 | 公共账号、机器人 | 公共账号有"管理员" |
 | **企业微信** | 员工 | 应用账号、客服账号 | 应用绑负责人 |
 | **飞书** | 个人 | 机器人、自定义应用 | 机器人有 owner |
@@ -67,7 +67,7 @@ type Account = {
 | 能否拥有其他账号 | ✓ | ✗（不套娃）|
 | 出现在 User 列表 | ✓ | ✗（在 "Agents" / "公共账号" 视图）|
 | 资源结构 | 完整的 personal repo / vault / .claude / memory / loops | 同左，完全同构 |
-| OA 类比 | 工号 / 员工账号 / 个人钉钉号 | 业务账号 / 公共账号 / 机器人 / 服务账号 |
+| OA 类比 | employee ID / staff account / 个人钉钉号 | 业务账号 / 公共账号 / 机器人 / 服务账号 |
 
 **结构上同构** 这一点非常重要：任何对账号生效的代码路径（spawn sandbox、注入 vault、composeLoopClaudeConfig、metadata 注入等）**完全不区分**两种账号，它们走同一份代码。区别只在认证入口的几行：
 
