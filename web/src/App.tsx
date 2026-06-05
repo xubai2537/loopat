@@ -405,7 +405,7 @@ function Shell({ ws }: { ws: WorkspaceState }) {
       {/* Mobile bottom TabBar — hidden on desktop, share mode, auth page, and detail views. */}
       {showTabBar && <TabBar />}
       {/* Floating DM bubble — hidden on /chat where the full surface is already up. */}
-      {!onChatRoute && <FloatingDm me={me} />}
+      {!onChatRoute && !isMobile && <FloatingDm me={me} />}
     </div>
   )
 }
