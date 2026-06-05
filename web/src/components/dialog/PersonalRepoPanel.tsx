@@ -272,7 +272,7 @@ export function PersonalRepoPanel({ onDone, initialToken }: { onDone?: () => voi
             rel="noreferrer"
             className="text-[11px] text-blue-600 hover:underline break-all w-fit"
           >
-            你的个人仓库: {ghRepoWebUrl} ↗
+            Your personal repo: {ghRepoWebUrl} ↗
           </a>
         )}
         <div className="text-[11px] text-emerald-700 leading-relaxed bg-emerald-50 border border-emerald-200 rounded p-2">
@@ -685,7 +685,7 @@ export function PersonalRepoPanel({ onDone, initialToken }: { onDone?: () => voi
             <div className="text-[11px] text-gray-500">
               You'll get a one-time git-crypt key to back up right after.
             </div>
-            {ghRepoWebUrl && (
+            {ghRepoExists && ghRepoWebUrl && (
               <a
                 href={ghRepoWebUrl}
                 target="_blank"
