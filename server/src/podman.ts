@@ -394,6 +394,9 @@ export async function buildPodmanCreateArgs(opts: ContainerOptions): Promise<str
 
   const args: string[] = [
     "--name", containerName(opts.loopId),
+    // Self-heal a stale name collision (orphan with our name from a crash) so a
+    // recreate doesn't loop on "name already in use" → 137; we own the name.
+    "--replace",
     "--label", `${LABEL_LOOP}=${opts.loopId}`,
     "--label", `${LABEL_WORKSPACE}=${WORKSPACE}`,
     // --userns=keep-id:uid=2000,gid=2000 maps whatever uid is running

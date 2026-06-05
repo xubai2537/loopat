@@ -160,6 +160,11 @@ describe("buildPodmanCreateArgs — container shape", () => {
     expect(containerName(LOOP_ID)).toBe(`loopat-${WORKSPACE}-${LOOP_ID}`)
   })
 
+  test("creates with --replace so a stale name collision self-heals (no 137 loop)", async () => {
+    const args = await buildPodmanCreateArgs({ loopId: LOOP_ID, createdBy: USER })
+    expect(args).toContain("--replace")
+  })
+
   test("uses the content-hash loopat-sandbox image (locally built, no docker hub at runtime)", async () => {
     const args = await buildPodmanCreateArgs({ loopId: LOOP_ID, createdBy: USER })
     // Content-addressed (no workspace prefix) so images are reused across
