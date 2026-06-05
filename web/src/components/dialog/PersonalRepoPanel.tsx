@@ -59,7 +59,7 @@ async function copyText(text: string): Promise<boolean> {
  * "clean slate" — no git-crypt config and no tracked secrets. Anything else
  * the user has to fix outside loopat (rotate + fresh repo).
  */
-export function PersonalRepoPanel({ onDone }: { onDone?: () => void } = {}) {
+export function PersonalRepoPanel({ onDone, initialToken }: { onDone?: () => void; initialToken?: string } = {}) {
   const [status, setStatus] = useState<PersonalStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [repoUrl, setRepoUrl] = useState("")
@@ -100,6 +100,22 @@ export function PersonalRepoPanel({ onDone }: { onDone?: () => void } = {}) {
       })
       .finally(() => setLoading(false))
   }, [])
+
+  // Device-flow hand-off: a token was obtained via GitHub login, so skip the
+  // paste step — prefill it and jump straight to the repo picker.
+  useEffect(() => {
+    if (!initialToken || loading) return
+    setGhToken(initialToken)
+    setGhBusy(true)
+    listPersonalRepos(initialToken)
+      .then((res) => {
+        if (!res.ok) { setGhError(res.error ?? "invalid token"); return }
+        setGhRepos(res.repos)
+        if (res.login) setGhLogin(res.login)
+        setStep("repo")
+      })
+      .finally(() => setGhBusy(false))
+  }, [initialToken, loading])
 
   const copyPub = async () => {
     if (!status?.publicKey) return

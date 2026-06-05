@@ -804,6 +804,23 @@ export async function submitOnboarding(
   return { ok: true, next: await onboardingView(userId, vault) }
 }
 
+/** Start a GitHub device-flow login: returns the code to show + poll interval. */
+export async function deviceFlowStart(): Promise<{ device_code: string; user_code: string; verification_uri: string; interval: number }> {
+  const { requestDeviceCode } = await import("./github")
+  const d = await requestDeviceCode()
+  return { device_code: d.device_code, user_code: d.user_code, verification_uri: d.verification_uri, interval: d.interval }
+}
+
+/** Poll once. While the user hasn't approved, report pending. On approval, hand
+ *  the token back so the picker (existing repo + git-crypt flow) takes over — we
+ *  do NOT auto-create a repo. */
+export async function deviceFlowPoll(
+  deviceCode: string,
+): Promise<{ status: "pending" | "slow_down" } | { status: "error"; error: string } | { status: "ok"; token: string }> {
+  const { pollDeviceToken } = await import("./github")
+  return pollDeviceToken(deviceCode)
+}
+
 /**
  * Detect whether `personal/<user>/` is "fresh" — i.e. only has the
  * scaffolding we put there (`.git`, `memory/`). If yes, it's safe to wipe +

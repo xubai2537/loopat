@@ -4,7 +4,7 @@ import { createBunWebSocket } from "hono/bun"
 import { existsSync } from "node:fs"
 import { execFile, execFileSync, spawn } from "node:child_process"
 import { promisify } from "node:util"
-import { listLoops, createLoop, getLoop, loopExists, patchLoopMeta, backfillAllMounts, ensureWorkspaceDirs, provisionUserPersonal, importPersonalFromRepo, setupPersonalViaProvider, listPersonalReposViaProvider, authenticateViaProvider, isPersonalFresh, ensureUiNotesWorktree, syncUiNotes, ffUpdateUiNotes, discardUiNotes, notesBehind, inspectPersonalDirty, syncPersonalToRemote, deletePersonalVault, pullPersonalFromRemote, pushPersonalToRemote, ensureContextMounts, effectiveDriver, isDriver, distillLoop, inspectRepoSync, pullRepoFromRemote, pushRepoToRemote, listVaultPublicKeys, userOnboarding, submitOnboarding, dismissOnboarding } from "./loops"
+import { listLoops, createLoop, getLoop, loopExists, patchLoopMeta, backfillAllMounts, ensureWorkspaceDirs, provisionUserPersonal, importPersonalFromRepo, setupPersonalViaProvider, listPersonalReposViaProvider, authenticateViaProvider, isPersonalFresh, ensureUiNotesWorktree, syncUiNotes, ffUpdateUiNotes, discardUiNotes, notesBehind, inspectPersonalDirty, syncPersonalToRemote, deletePersonalVault, pullPersonalFromRemote, pushPersonalToRemote, ensureContextMounts, effectiveDriver, isDriver, distillLoop, inspectRepoSync, pullRepoFromRemote, pushRepoToRemote, listVaultPublicKeys, userOnboarding, submitOnboarding, dismissOnboarding, deviceFlowStart, deviceFlowPoll } from "./loops"
 import { getEphemeralHostPort, probePodman, stopAllWorkspaceContainers, ensureServeContainer, ensurePortProxyContainer, ensureSandboxImage, buildPodmanExecArgs, ensureContainer, containerName, V_LOOP_WORKDIR } from "./podman"
 import { startMcpAuth, completeMcpAuth, probeOAuthSupport, evictOAuthProbe, parseBearerEnvName, mcpRequiredEnvs, parseTemplateVars, type OAuthSupport } from "./mcp-oauth"
 import { DEFAULT_VAULT, loadVaultEnvs } from "./vaults"
@@ -1302,6 +1302,24 @@ app.post("/api/onboarding/done", requireAuth, async (c) => {
   const userId = c.get("userId") as string
   await dismissOnboarding(userId)
   return c.json({ ok: true })
+})
+
+// GitHub device-flow login — start: returns the user code + verification URL.
+app.post("/api/onboarding/device/start", requireAuth, async (c) => {
+  try {
+    return c.json(await deviceFlowStart())
+  } catch (e: any) {
+    return c.json({ error: e?.message ?? "device start failed" }, 502)
+  }
+})
+
+// Poll: pending until the user approves; on token, hands the token back so the
+// repo picker takes over. Frontend re-polls on `pending`/`slow_down`.
+app.post("/api/onboarding/device/poll", requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const deviceCode = typeof body?.device_code === "string" ? body.device_code : ""
+  if (!deviceCode) return c.json({ error: "device_code required" }, 400)
+  return c.json(await deviceFlowPoll(deviceCode))
 })
 
 // Export the user's git-crypt key (base64). Behind a fresh password check

@@ -63,6 +63,7 @@ export type OnboardingView =
       show:
         | ({ kind: "form" } & OnboardingForm)
         | { kind: "route"; path: string; title?: string; description?: string }
+        | { kind: "device"; title: string; description?: string }
         | {
             kind: "info"
             title: string

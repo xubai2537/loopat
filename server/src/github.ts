@@ -48,6 +48,48 @@ function fail(op: string, r: { status: number; data: any }): never {
   throw new Error(`github ${op} failed (${r.status})${msg ? `: ${msg}` : ""}`)
 }
 
+/**
+ * OAuth Device Flow — login on localhost/cloud/any deployment without a per-user
+ * app or a callback URL. One public client_id (NOT a secret — like gh CLI) is
+ * baked in, overridable via LOOPAT_GITHUB_CLIENT_ID for self-hosters with their
+ * own app. Scopes: `repo` (create the private personal repo) + `admin:public_key`
+ * (register the runtime ssh key). The token lands in the vault; from there
+ * onboarding is identical to a pasted PAT.
+ */
+export const GITHUB_DEVICE_CLIENT_ID = process.env.LOOPAT_GITHUB_CLIENT_ID || "Ov23lijopFG81cPZXsI2"
+export const GITHUB_DEVICE_SCOPE = "repo,admin:public_key"
+
+/** Step 1: request a device code. Returns the code to show + how long to poll. */
+export async function requestDeviceCode(): Promise<{
+  device_code: string; user_code: string; verification_uri: string; interval: number; expires_in: number
+}> {
+  const res = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: GITHUB_DEVICE_CLIENT_ID, scope: GITHUB_DEVICE_SCOPE }),
+  })
+  const d = await res.json().catch(() => null)
+  if (!res.ok || !d?.device_code) throw new Error(`github device code request failed (${res.status})`)
+  return { device_code: d.device_code, user_code: d.user_code, verification_uri: d.verification_uri, interval: d.interval ?? 5, expires_in: d.expires_in ?? 900 }
+}
+
+/** Step 2: poll once for the token. `pending` until the user approves; `slow_down`
+ *  asks us to back off; any other error is fatal. Returns the token on success. */
+export async function pollDeviceToken(deviceCode: string): Promise<
+  { status: "ok"; token: string } | { status: "pending" } | { status: "slow_down" } | { status: "error"; error: string }
+> {
+  const res = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: GITHUB_DEVICE_CLIENT_ID, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+  })
+  const d = await res.json().catch(() => null)
+  if (d?.access_token) return { status: "ok", token: d.access_token }
+  if (d?.error === "authorization_pending") return { status: "pending" }
+  if (d?.error === "slow_down") return { status: "slow_down" }
+  return { status: "error", error: d?.error_description ?? d?.error ?? `poll failed (${res.status})` }
+}
+
 /** Capability 1 — authenticate: turn a token into the user's login. */
 export async function getViewer(c: GithubClient): Promise<{ login: string; id: number }> {
   const r = await gh(c, "GET", "/user")
@@ -133,19 +175,44 @@ export async function ensureCollaborator(
 export const githubProvider: GitHostProvider = {
   id: "github",
   label: "GitHub",
-  gitAuthMode: "ssh-deploy-key",
+  // https-token: the device-flow OAuth token (scope `repo`) does both API and
+  // git over https://<login>:<token>@github.com/… — one credential for every
+  // repo, no per-repo deploy key. (OAuth-App tokens don't expire by default.)
+  gitAuthMode: "https-token",
+  // Onboarding step 1: no personal repo yet → device-flow login. loopat drives
+  // the device dance (start/poll) and, on token, provisions the repo. Once the
+  // repo is imported there's nothing left to gate on, so we're done.
+  async onboarding(ctx) {
+    if (!ctx.personalRepoImported) {
+      return {
+        done: false,
+        show: {
+          kind: "device",
+          title: "用 GitHub 登录",
+          description: "loopat 不存你的数据 —— 登录后会自动建一个私有个人仓库,你的 key / ssh / memory 都加密存在里面。",
+        },
+      }
+    }
+    return { done: true }
+  },
   async authenticate(cred) {
     return await getViewer(githubClient(cred.token, cred.baseUrl))
   },
   async ensureRepo(cred, name, opts) {
     const r = await ensureUserRepo(githubClient(cred.token, cred.baseUrl), name, { private: opts?.private })
-    return { url: r.sshUrl, created: r.created }
+    return { url: r.httpUrl, created: r.created }
   },
   async registerDeployKey(cred, repo, title, pubkey, readOnly) {
     await ensureDeployKey(githubClient(cred.token, cred.baseUrl), repo.owner, repo.name, title, pubkey, readOnly)
   },
   async registerUserKey(cred, title, pubkey) {
     await ensureUserKey(githubClient(cred.token, cred.baseUrl), title, pubkey)
+  },
+  async listRepos(cred) {
+    const c = githubClient(cred.token, cred.baseUrl)
+    const r = await gh(c, "GET", "/user/repos?per_page=100&affiliation=owner&sort=updated")
+    const items = Array.isArray(r.data) ? r.data : []
+    return items.map((p: any) => ({ name: p.name, path: p.full_name }))
   },
   async grantAccess(cred, repo, login, level) {
     await ensureCollaborator(

@@ -195,6 +195,7 @@ export type OnboardingShow =
       values?: { label: string; value: string }[]
       help?: { label: string; url: string }[]
     }
+  | { kind: "device"; title: string; description?: string }
 export type OnboardingStatus =
   | { gated: boolean; done: true }
   | { gated: boolean; done: false; show: OnboardingShow }
@@ -217,6 +218,26 @@ export async function submitOnboarding(
   const j = await r.json().catch(() => ({}))
   if (!r.ok) return { error: (j as any).error ?? `submit failed (${r.status})` }
   return j as OnboardingStatus
+}
+
+// GitHub device-flow login: start returns the code to show; poll runs until the
+// user approves and the personal repo is provisioned.
+export async function deviceStart(): Promise<{ device_code: string; user_code: string; verification_uri: string; interval: number } | { error: string }> {
+  const r = await apiFetch("/api/onboarding/device/start", { method: "POST" })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) return { error: (j as any).error ?? `device start failed (${r.status})` }
+  return j
+}
+
+export async function devicePoll(deviceCode: string): Promise<
+  { status: "pending" | "slow_down" } | { status: "error"; error: string } | { status: "ok"; token: string }
+> {
+  const r = await apiFetch("/api/onboarding/device/poll", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device_code: deviceCode }),
+  })
+  return (await r.json().catch(() => ({ status: "error", error: "poll failed" }))) as any
 }
 
 export async function exportPersonalCryptKey(
