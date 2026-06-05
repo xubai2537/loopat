@@ -536,6 +536,12 @@ class LoopSession {
         // Required by SDK when using permissionMode: "bypassPermissions"
         ...(this.currentPermissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         systemPrompt: { type: "preset", preset: "claude_code", append: loopatAppend },
+        // Stream full subagent conversations (text + thinking) and AI-generated
+        // progress summaries so the inline AgentRenderer card shows real-time
+        // activity instead of just a spinner. AgentRenderer + childMessagesByAgentId
+        // on the FE side are already wired to consume these.
+        forwardSubagentText: true,
+        agentProgressSummaries: true,
         mcpServers,
         // External marketplace plugins (enabledPlugins in settings.json) are
         // resolved natively by the inner SDK now — ~/.claude/plugins/ is
@@ -1311,6 +1317,18 @@ class LoopSession {
   async interrupt() {
     this.generating = false
     if (this.q) await this.q.interrupt().catch(() => {})
+  }
+
+  /** Background in-flight foreground tasks (Bash commands + subagents) so the
+   *  turn finalizes and the queue can drain. Returns false if there was
+   *  nothing to background — useful for telling the caller whether the next
+   *  user message will actually go through immediately. */
+  async backgroundTasks(): Promise<boolean> {
+    if (!this.q) return false
+    return this.q.backgroundTasks().catch((e: any) => {
+      console.warn(`[sdk:${this.id.slice(0, 8)}] backgroundTasks failed: ${e?.message ?? e}`)
+      return false
+    })
   }
 
   getQueueLength(): number {

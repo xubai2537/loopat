@@ -2,7 +2,7 @@ import {
   MessagePrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { BrainIcon, ChevronDownIcon, RotateCcwIcon } from "lucide-react";
 import { MarkdownBlock } from "./MarkdownBlock";
 import ToolRenderer from "./ToolRenderer";
 import {
@@ -10,7 +10,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { useLoopRuntimeExtra } from "@/useLoopRuntime";
+import { useLoopRuntimeExtra, type TurnStats } from "@/useLoopRuntime";
 import { cn } from "@/lib/utils";
 import ErrorBoundary from "./ErrorBoundary";
 
@@ -21,6 +21,17 @@ function extractTime(messageId: string | undefined): string {
     return new Date(parseInt(match[1], 10)).toLocaleTimeString();
   }
   return "";
+}
+
+/** Compact one-line per-turn stats footer, e.g.
+ *  `Tokens: 12,345 ↑10,000 ↓2,345  ·  TTFT 1.2s  ·  8.7s`. */
+function formatTurnStats(s: TurnStats): string {
+  const segs = [
+    `Tokens: ${(s.input + s.output).toLocaleString()} ↑${s.input.toLocaleString()} ↓${s.output.toLocaleString()}`,
+  ];
+  if (s.ttftMs != null) segs.push(`TTFT ${(s.ttftMs / 1000).toFixed(1)}s`);
+  segs.push(`${(s.totalMs / 1000).toFixed(1)}s`);
+  return segs.join("  ·  ");
 }
 
 /* ─── JSON detection helper ─── */
@@ -93,7 +104,7 @@ export default function AssistantMessage() {
   // hook-order invariant holds across renders (content shape changes during
   // streaming / clear-boundary insertion).
   const messageId = useAuiState((s) => s.message.id);
-  const { toolProgressMap, taskMap, thinkingOpen, setThinkingOpen } = useLoopRuntimeExtra();
+  const { toolProgressMap, taskMap, thinkingOpen, setThinkingOpen, retryLastUser, turnStatsByMessageId } = useLoopRuntimeExtra();
   const messageParts = useAuiState((s) => s.message.content);
   const textContent = useAuiState((s) => {
     const parts = s.message.content;
@@ -103,8 +114,16 @@ export default function AssistantMessage() {
       .map((p: { text?: string }) => p.text ?? "")
       .join("");
   });
+  // Retry icon only on the LAST completed (non-running) assistant message.
+  const isRunning = useAuiState((s) => s.message.status?.type === "running");
+  const isLast = useAuiState((s) => s.message.isLast);
+  const showRetry = !isRunning && isLast;
 
   const time = extractTime(messageId);
+  // Per-turn stats render once per turn, on the LAST assistant message of the
+  // turn — which, after mergeAssistantStreaks, is this single merged bubble.
+  // Present only for live-session turns that produced a model result.
+  const turnStats = turnStatsByMessageId.get(messageId);
 
   const hasContent = Array.isArray(messageParts) && messageParts.some(
     (p: any) =>
@@ -128,14 +147,29 @@ export default function AssistantMessage() {
     <MessagePrimitive.GroupedParts
       groupBy={(part) => {
         if (part.type === "reasoning")
-          return ["group-chainOfThought", "group-reasoning"];
+          return ["group-pillRow", "group-chainOfThought", "group-reasoning"];
+        if (part.type === "tool-call")
+          return ["group-pillRow", "group-toolCalls"];
         return null;
       }}
     >
       {({ part, children }) => {
         switch (part.type) {
+          case "group-pillRow":
+            // Lay out adjacent reasoning + tool-call groups on one row. Each
+            // group renders full-width (own line) for now; this flex-wrap
+            // container lets future compact pills flow side by side without
+            // touching this layout.
+            return (
+              <div className="my-0.5 flex flex-wrap items-center gap-1">
+                {children}
+              </div>
+            );
           case "group-chainOfThought":
-            return <div data-slot="chain-of-thought">{children}</div>;
+            return <div data-slot="chain-of-thought" className="contents">{children}</div>;
+          case "group-toolCalls":
+            // Consecutive tool calls stacked full-width inside the pill row.
+            return <div className="w-full space-y-1">{children}</div>;
           case "group-reasoning": {
             const running = part.status.type === "running";
             const charCount = (part as any).indices?.reduce((sum: number, i: number) => {
@@ -148,7 +182,7 @@ export default function AssistantMessage() {
               <Collapsible
                 open={running ? true : thinkingOpen}
                 onOpenChange={setThinkingOpen}
-                className="group/think my-1 overflow-hidden rounded-md border border-gray-100 bg-gray-50/50"
+                className="group/think my-1 w-full overflow-hidden rounded-md border border-gray-100 bg-gray-50/50"
               >
                 <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs transition-colors hover:bg-gray-100/50">
                   <BrainIcon className="h-3 w-3 shrink-0 text-gray-400" />
@@ -225,7 +259,7 @@ export default function AssistantMessage() {
   return (
     <MessagePrimitive.Root
       data-role="assistant"
-      className="relative pl-6 md:pl-8"
+      className="group relative pl-6 md:pl-8"
     >
       {/* Vertical line gutter — dot sits on the line. Extends past bounds to bridge gap between messages */}
       <div className="absolute left-[5px] -top-2 -bottom-2 w-[2px] bg-gray-200" />
@@ -246,10 +280,27 @@ export default function AssistantMessage() {
         {children}
       </div>
 
-      {/* Footer: time */}
-      {time && (
+      {/* Footer: time + retry + per-turn stats (stats only on the last
+          assistant message of a live turn; retry only when completed) */}
+      {(time || showRetry || turnStats) && (
         <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-400">
-          <span>{time}</span>
+          {time && <span>{time}</span>}
+          {showRetry && (
+            <button
+              type="button"
+              onClick={retryLastUser}
+              data-copy-ignore=""
+              aria-label="Retry"
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600 select-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            >
+              <RotateCcwIcon className="h-3 w-3" />
+            </button>
+          )}
+          {turnStats && (
+            <span className="ml-auto tabular-nums select-none">
+              {formatTurnStats(turnStats)}
+            </span>
+          )}
         </div>
       )}
     </MessagePrimitive.Root>
