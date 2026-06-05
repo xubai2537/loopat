@@ -32,8 +32,23 @@ import { getChatHistory, appendChatHistory, readFile } from "@/api";
 const FALLBACK_CONTEXT_WINDOW = 200_000;
 const MAX_HISTORY = 500;
 
+const MOBILE_QUERY = "(max-width: 767px)";
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia(MOBILE_QUERY).matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(MOBILE_QUERY);
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return mobile;
+}
+
 export default function Composer({ pickedFile, editorSelection }: { pickedFile?: string | null; editorSelection?: { from: number; to: number } | null }) {
   const isRunning = useAuiState((s) => s.thread.isRunning);
+  const isMobile = useIsMobile();
   const hasInput = useAuiState(
     (s) => typeof s.composer.text === "string" && s.composer.text.trim().length > 0,
   );
@@ -200,7 +215,7 @@ export default function Composer({ pickedFile, editorSelection }: { pickedFile?:
       suppressSlashRef.current = false;
     }
     if (e.key === "Enter" && !e.nativeEvent.isComposing && !e.shiftKey && isRunning) {
-      if (window.matchMedia("(pointer: coarse) and (not (any-pointer: fine))").matches) return;
+      if (isMobile) return;
       e.preventDefault();
       handleEnqueue();
       return;
@@ -345,7 +360,7 @@ export default function Composer({ pickedFile, editorSelection }: { pickedFile?:
             autoFocus
             aria-label="Message input"
             onKeyDown={handleKeyDown}
-            {...({ unstable_insertNewlineOnTouchEnter: true } as any)}
+            submitMode={isMobile ? "none" : "enter"}
           />
 
           {/* Toolbar */}
