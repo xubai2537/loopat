@@ -5,7 +5,7 @@
  * LOOPAT_HOME, server-side).
  */
 import { useEffect, useState } from "react"
-import { MessageCircle, RefreshCw, X, Sun, Moon } from "lucide-react"
+import { MessageCircle, RefreshCw, X, Sun, Moon, ArrowLeft } from "lucide-react"
 import { BrowserRouter, Routes, Route, Navigate, NavLink, Outlet, useNavigate, useMatch, useLocation } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useWorkspaceState, type WorkspaceState } from "./state"
@@ -22,12 +22,17 @@ import { SettingsPage } from "./pages/SettingsPage"
 import { AdminSystemPage } from "./pages/AdminSystemPage"
 import { AuthPage } from "./pages/AuthPage"
 import { FloatingDm } from "./components/FloatingDm"
+import { TabBar } from "./components/TabBar"
+import { LoopListPage } from "./pages/LoopListPage"
+import { ChatListPage } from "./pages/ChatListPage"
+import { MePage } from "./pages/MePage"
 import { SetupPersonalRepoCard, isSetupPersonalRepoDismissed } from "./components/SetupPersonalRepoCard"
 import { getServerWorkspace, getVersion, getBuildInfo, linkKanbanLoop, getPersonalStatus, getOnboarding, type PersonalStatus, type OnboardingStatus } from "./api"
 import { OnboardingForm } from "./components/OnboardingForm"
 import { OnboardingInfo } from "./components/OnboardingInfo"
 import { useChatUnreadTitle } from "./useChatUnreadTitle"
 import { ThemeProvider, useTheme } from "./theme"
+import { useIsMobile } from "./lib/useIsMobile"
 
 const TABS = [
   { id: "loop", label: "Loop", icon: "⑂" },
@@ -49,6 +54,7 @@ function Layout() {
 function Shell({ ws }: { ws: WorkspaceState }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const isMobile = useIsMobile()
   const [workspaceName, setWorkspaceName] = useState("loopat")
   const [menuOpen, setMenuOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -59,13 +65,24 @@ function Shell({ ws }: { ws: WorkspaceState }) {
   const me = ws.currentUser?.id ?? ""
   const isAdmin = ws.currentUser?.role === "admin"
   const loggedIn = !!ws.currentUser
-  const onLoopRoute = !!useMatch("/loop/:id")
+  const loopMatch = useMatch("/loop/:id")
+  const onLoopRoute = !!loopMatch
   const onChatRoute = location.pathname.startsWith("/chat")
+  const chatDetailMatch = useMatch("/chat/:convId")
+  const onChatDetailRoute = !!chatDetailMatch
+  const onSettingsRoute = location.pathname.startsWith("/settings")
   // Anonymous viewers on a loop URL get the "shared" experience: no header,
   // no tabs, no login affordance, no dialogs. The page itself enforces
   // meta.public via server gating; if it's not public the page renders its
   // own "unavailable" state.
   const shareMode = !loggedIn && onLoopRoute
+  const showTabBar = isMobile && !shareMode && loggedIn && !onLoopRoute && !onChatDetailRoute
+
+  // Centered title for loop/chat detail pages on mobile.
+  const mobileDetailTitle = onLoopRoute
+    ? (ws.loops.find(l => l.id === loopMatch?.params.id)?.title ?? "Loop")
+    : onChatDetailRoute ? "Chat"
+    : null
 
   useEffect(() => {
     if (shareMode) return
@@ -100,6 +117,13 @@ function Shell({ ws }: { ws: WorkspaceState }) {
     }
     window.addEventListener("loopat:version-mismatch", handler)
     return () => window.removeEventListener("loopat:version-mismatch", handler)
+  }, [])
+
+  // Listen for "open about" from MePage (mobile TabBar → Me → About link).
+  useEffect(() => {
+    const handler = () => setAboutOpen(true)
+    window.addEventListener("loopat:open-about", handler)
+    return () => window.removeEventListener("loopat:open-about", handler)
   }, [])
 
   useEffect(() => {
@@ -161,12 +185,40 @@ function Shell({ ws }: { ws: WorkspaceState }) {
 
   return (
     <div className="h-full w-full flex flex-col bg-gray-50 text-gray-900">
-      <header className="h-12 shrink-0 border-b border-gray-200 bg-white flex items-center px-2 md:px-4 gap-2 md:gap-4">
-        <div className="flex items-center gap-2 px-1 md:px-2 h-8 shrink-0 cursor-pointer" title={`workspace: ${workspaceName}`} onClick={() => { window.location.href = "/" }}>
+      <header className="h-12 shrink-0 border-b border-gray-200 bg-white flex items-center px-2 md:px-4 gap-2 md:gap-4 relative">
+        {/* Logo: desktop always, mobile hidden */}
+        <div className="hidden md:flex items-center gap-2 px-1 md:px-2 h-8 shrink-0 cursor-pointer" title={`workspace: ${workspaceName}`} onClick={() => { window.location.href = "/" }}>
           <span className="text-lg leading-none">🧶</span>
-          <span className="hidden md:inline text-sm text-gray-900 font-medium">{workspaceName}</span>
+          <span className="text-sm text-gray-900 font-medium">{workspaceName}</span>
         </div>
-        <nav className="flex items-center gap-0.5 md:gap-1">
+        {/* Mobile back button: shown on detail pages and settings */}
+        {isMobile && (onLoopRoute || onChatDetailRoute || onSettingsRoute) && (
+          <button
+            type="button"
+            onClick={() => {
+              if (onLoopRoute) navigate("/loop")
+              else if (onChatDetailRoute) navigate("/chat")
+              else navigate(-1)
+            }}
+            className="flex items-center gap-1 px-1 h-8 shrink-0 text-gray-600 hover:text-gray-900"
+            aria-label="back"
+          >
+            <ArrowLeft size={18} />
+          </button>
+        )}
+        {/* Mobile centered: detail title / Settings / 🧶 logo */}
+        {isMobile && !shareMode && loggedIn && (
+          <div className="absolute left-1/2 -translate-x-1/2 pointer-events-none truncate max-w-[55vw]">
+            {onSettingsRoute ? (
+              <span className="text-sm font-medium text-gray-700">Settings</span>
+            ) : mobileDetailTitle ? (
+              <span className="text-sm font-medium text-gray-700">{mobileDetailTitle}</span>
+            ) : (
+              <span className="text-lg leading-none">🧶</span>
+            )}
+          </div>
+        )}
+        <nav className="hidden md:flex items-center gap-0.5 md:gap-1">
           {TABS.map((t) => (
             <NavLink
               key={t.id}
@@ -195,7 +247,7 @@ function Shell({ ws }: { ws: WorkspaceState }) {
         <button
           type="button"
           onClick={toggleTheme}
-          className="flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          className="hidden md:flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
@@ -328,7 +380,7 @@ function Shell({ ws }: { ws: WorkspaceState }) {
           </button>
         </div>
       )}
-      <main className="flex-1 min-h-0 min-w-0 overflow-hidden">
+      <main className={`flex-1 min-h-0 min-w-0 overflow-hidden ${showTabBar ? "pb-14" : ""}`}>
         {(() => {
           const ob = onboarding
           // No gate (or done / not logged in) → the normal app.
@@ -350,10 +402,26 @@ function Shell({ ws }: { ws: WorkspaceState }) {
         <NewLoopDialog onClose={() => ws.setNewLoopDialogOpen(false)} onCreate={handleCreate} initialTitle={ws.newLoopDialogTitle} />
       )}
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      {/* Mobile bottom TabBar — hidden on desktop, share mode, auth page, and detail views. */}
+      {showTabBar && <TabBar />}
       {/* Floating DM bubble — hidden on /chat where the full surface is already up. */}
       {!onChatRoute && <FloatingDm me={me} />}
     </div>
   )
+}
+
+/** On mobile, /loop shows the list page; on desktop, the existing auto-redirect. */
+function LoopRoot() {
+  const isMobile = useIsMobile()
+  if (isMobile) return <LoopListPage />
+  return <LoopRedirect />
+}
+
+/** On mobile, /chat shows the conversation list; on desktop, the existing page. */
+function ChatRoot() {
+  const isMobile = useIsMobile()
+  if (isMobile) return <ChatListPage />
+  return <ChatPage />
 }
 
 function LoopRedirect() {
@@ -438,7 +506,7 @@ export function App() {
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to="/loop" replace />} />
-              <Route path="/loop" element={<LoopRedirect />} />
+              <Route path="/loop" element={<LoopRoot />} />
               {/* Dual-mode: logged-in → full LoopPage with chrome; anonymous →
                   read-only share view (server gates by meta.public). Shell
                   drops the chrome when anonymous. */}
@@ -448,8 +516,9 @@ export function App() {
               <Route path="/kanban/:board" element={<KanbanPage />} />
               <Route path="/context" element={<Navigate to="/context/knowledge" replace />} />
               <Route path="/context/:sub" element={<ContextPage />} />
-              <Route path="/chat" element={<ChatPage />} />
+              <Route path="/chat" element={<ChatRoot />} />
               <Route path="/chat/:convId" element={<ChatPage />} />
+              <Route path="/me" element={<MePage />} />
               <Route path="/settings" element={<Navigate to="/settings/personal-repo" replace />} />
               <Route path="/settings/:tab" element={<SettingsPage />} />
               <Route path="/admin/system" element={<AdminSystemPage />} />

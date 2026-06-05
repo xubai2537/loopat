@@ -139,7 +139,7 @@ export function SettingsPage() {
 
   return (
     <div className="h-full overflow-hidden bg-gray-50 flex flex-col">
-      <header className="shrink-0 border-b border-gray-200 bg-white px-4 sm:px-6 h-12 flex items-center gap-3">
+      <header className="shrink-0 border-b border-gray-200 bg-white px-4 sm:px-6 h-12 hidden sm:flex items-center gap-3">
         <button
           type="button"
           onClick={() => navigate(-1)}

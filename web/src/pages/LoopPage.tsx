@@ -6,7 +6,7 @@ import { useEffect, useState, useMemo, useRef, Fragment } from "react"
 import { createPortal } from "react-dom"
 import { useParams, useNavigate, Navigate, useLocation } from "react-router-dom"
 import { AssistantRuntimeProvider } from "@assistant-ui/react"
-import { PanelLeftClose, PanelLeftOpen, Archive, ArchiveRestore, GitBranch, Globe, Lock, Copy, Check, ChevronDown, Hand, FlaskConical, Maximize2, Minimize2 } from "lucide-react"
+import { PanelLeftClose, PanelLeftOpen, GitBranch, Globe, Lock, Copy, Check, ChevronDown, Hand, FlaskConical, Maximize2, Minimize2 } from "lucide-react"
 import { Panel, Group, Separator } from "react-resizable-panels"
 import ChatInterface from "@/components/chat/ChatInterface"
 import { useWorkspace } from "../ctx"
@@ -15,6 +15,7 @@ import { getContext, distillLoop, listProfiles, type ContextMount, type LoopMeta
 import { SharePage } from "./SharePage"
 import { useIsMobile } from "../lib/useIsMobile"
 import { useLoopStatus } from "../useLoopStatus"
+import { LoopListContent } from "../components/LoopListContent"
 import { FileTree } from "../FileTree"
 import { GitDiffSidebar } from "../components/GitDiffSidebar"
 import { ShareArtifactDialog } from "../components/ShareArtifactDialog"
@@ -62,35 +63,9 @@ export function LoopPage() {
 // ============================================================================
 
 function LoopsList({ currentId }: { currentId: string }) {
-  const ws = useWorkspace()
   const navigate = useNavigate()
-  const [scope, setScope] = useState<"mine" | "all" | "rfd">("mine")
-  const [search, setSearch] = useState("")
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("loopat:loopsList:collapsed") === "1")
   const isMobile = useIsMobile()
-  const loopIds = useMemo(() => ws.loops.map(l => l.id), [ws.loops])
-  const statusMap = useLoopStatus(loopIds)
-
-  // Auto-mark the current loop as viewed when its status transitions to Done
-  // while the user is already on that page (prevents stale yellow dot).
-  useEffect(() => {
-    const entry = statusMap[currentId]
-    if (entry?.status === "Done" && entry?.viewed === false) {
-      markLoopViewed(currentId)
-    }
-  }, [statusMap, currentId])
-
-  const userId = ws.currentUser?.id
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim()
-    return ws.loops.filter((loop) => {
-      const effective = loop.driver ?? loop.createdBy
-      if (scope === "mine" && loop.createdBy !== userId && effective !== userId) return false
-      if (scope === "rfd" && !loop.rfdRequestedAt) return false
-      if (q && !loop.title.toLowerCase().includes(q) && !loop.id.toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [ws.loops, scope, userId, search])
 
   const setCollapsedPersist = (v: boolean) => {
     setCollapsed(v)
@@ -99,140 +74,23 @@ function LoopsList({ currentId }: { currentId: string }) {
 
   const sidebarContent = (
     <aside className="w-60 shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
-      <div className="px-2 pt-1.5 pb-1 space-y-1 border-b border-gray-200">
-        <div className="flex items-center gap-1">
-          {(["mine", "all", "rfd"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setScope(s)}
-              className={
-                scope === s
-                  ? s === "rfd"
-                    ? "px-2 h-6 rounded text-[11px] flex items-center gap-1 bg-amber-600 text-white"
-                    : "px-2 h-6 rounded text-[11px] bg-gray-900 text-white"
-                  : s === "rfd"
-                    ? "px-2 h-6 rounded text-[11px] flex items-center gap-1 text-amber-700 hover:bg-amber-50"
-                    : "px-2 h-6 rounded text-[11px] text-gray-500 hover:bg-gray-100"
-              }
-            >
-              {s === "mine" ? "mine" : s === "all" ? "all" : "RFD"}
-            </button>
-          ))}
-          <span className="text-[11px] text-gray-400 ml-auto pr-1">{filtered.length}</span>
-          <button
-            type="button"
-            onClick={() => ws.setShowArchived(!ws.showArchived)}
-            className={
-              ws.showArchived
-                ? "w-6 h-6 flex items-center justify-center text-gray-700 bg-gray-100 rounded"
-                : "w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"
-            }
-            title={ws.showArchived ? "hide archived" : "show archived"}
-          >
-            <Archive size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setCollapsedPersist(true)}
-            className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"
-            title="collapse sidebar"
-          >
-            <PanelLeftClose size={14} />
-          </button>
-        </div>
-        <input
-          type="text"
-          name="loop-search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="search loops…"
-          className="w-full h-6 rounded px-1.5 text-[11px] bg-gray-100 border border-transparent focus:border-gray-300 focus:bg-white focus:outline-none text-gray-600 placeholder-gray-400"
-        />
+      <div className="px-2 pt-1.5 border-b border-gray-200 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setCollapsedPersist(true)}
+          className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"
+          title="collapse sidebar"
+        >
+          <PanelLeftClose size={14} />
+        </button>
       </div>
-      <div className="flex-1 min-h-0 overflow-auto py-2">
-        {filtered.map((loop) => {
-          const sel = currentId === loop.id
-          const archived = loop.archived === true
-          // Server rejects PATCH from non-owners with 403 — surface that
-          // upfront so users don't think the button is broken.
-          const isOwner = ws.currentUser?.id === loop.createdBy
-          const entry = statusMap[loop.id]
-          const isDone = entry?.status === "Done" || entry?.status === "Ready"
-          const isRunning = entry !== undefined && !isDone
-          return (
-            <div
-              key={loop.id}
-              className={
-                "group/row relative flex items-stretch " +
-                (sel ? "bg-gray-100" : "hover:bg-gray-50")
-              }
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  markLoopViewed(loop.id)
-                  navigate(`/loop/${loop.id}`)
-                  if (isMobile) setCollapsedPersist(true)
-                }}
-                className={
-                  "flex-1 min-w-0 px-3 py-1.5 flex items-center gap-2 text-left " +
-                  (archived ? "opacity-60" : "")
-                }
-              >
-                <span className={
-                  "w-1.5 h-1.5 rounded-full shrink-0 mt-0.5 " +
-                  (archived ? "bg-gray-400" : isRunning ? "bg-blue-500 animate-pulse" : isDone && !entry?.viewed ? "bg-yellow-500" : isDone ? "bg-emerald-500" : "bg-gray-300")
-                } />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] text-gray-900 truncate flex items-center gap-1.5">
-                    {archived && <Archive size={10} className="text-gray-400 shrink-0" />}
-                    {loop.rfdRequestedAt && (
-                      <span className="shrink-0 text-[9px] px-1 rounded bg-amber-100 text-amber-800 font-medium tracking-wide">RFD</span>
-                    )}
-                    <span className="truncate">{loop.title}</span>
-                    {entry && (
-                      <span className={"shrink-0 text-[10px] font-medium " +
-                        (isRunning ? "text-blue-500" : isDone ? "text-emerald-500" : "text-gray-400")}>
-                        {entry.status}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-gray-500 truncate flex items-center gap-1 mt-0.5">
-                    <span>{loop.driver ?? loop.createdBy}</span>
-                    <span className="text-gray-300">·</span>
-                    <span className="font-mono text-[10px] text-gray-400">{loop.id.slice(0, 6)}</span>
-                  </div>
-                </div>
-              </button>
-              <button
-                type="button"
-                disabled={!isOwner}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (isOwner) ws.setLoopArchived(loop.id, !archived)
-                }}
-                className={
-                  (isMobile ? "opacity-100" : "opacity-0 group-hover/row:opacity-100") + " transition-opacity w-7 flex items-center justify-center " +
-                  (isOwner
-                    ? "text-gray-400 hover:text-gray-700"
-                    : "text-gray-300 cursor-not-allowed")
-                }
-                title={
-                  isOwner
-                    ? (archived ? "unarchive" : "archive (hide + read-only)")
-                    : `only ${loop.createdBy} can ${archived ? "unarchive" : "archive"} this loop`
-                }
-              >
-                {archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
-              </button>
-            </div>
-          )
-        })}
-        {filtered.length === 0 && (
-          <div className="px-3 py-4 text-[12px] text-gray-400 italic">no loops · click "+ New Loop"</div>
-        )}
-      </div>
+      <LoopListContent
+        currentId={currentId}
+        onSelect={(loopId) => {
+          navigate(`/loop/${loopId}`)
+          if (isMobile) setCollapsedPersist(true)
+        }}
+      />
     </aside>
   )
 

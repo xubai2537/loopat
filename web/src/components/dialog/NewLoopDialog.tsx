@@ -104,20 +104,44 @@ export function NewLoopDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center"
+      className="fixed inset-0 z-50 bg-black/30 flex items-end sm:items-center justify-center"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[480px] mx-4 bg-white rounded-md shadow-xl border border-gray-200 p-4 md:p-5 max-h-[85vh] overflow-y-auto"
+        className="w-full sm:max-w-[480px] sm:mx-4 bg-white rounded-t-xl sm:rounded-md shadow-xl border border-gray-200 flex flex-col h-dvh sm:h-auto sm:max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-base font-semibold text-gray-900 mb-4">New loop</div>
-        <form onSubmit={submit} className="flex flex-col gap-4">
+        {/* Header */}
+        <div className="shrink-0 px-4 sm:px-5 pt-4 sm:pt-5 pb-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="text-base font-semibold text-gray-900">New loop</div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="sm:hidden w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 -mr-1"
+            aria-label="close"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 4l10 10M14 4L4 14" /></svg>
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <form id="new-loop-form" onSubmit={submit} className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-4 flex flex-col gap-4">
+          <DialogField label="Name" hint="Optional — defaults to 'untitled'.">
+            <input
+              ref={inputRef}
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="refactor-gateway"
+              className="w-full px-3 py-2.5 sm:py-1.5 text-base sm:text-sm border border-gray-300 rounded outline-none focus:border-gray-500"
+            />
+          </DialogField>
+
           <DialogField label="Repo" hint="Sets the workdir. Optional — leave (none) for an empty workdir.">
             <select
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded outline-none focus:border-gray-500 bg-white"
+              className="w-full px-3 py-2.5 sm:py-1.5 text-base sm:text-sm border border-gray-300 rounded outline-none focus:border-gray-500 bg-white"
             >
               <option value="">(none — empty workdir)</option>
               {repos.map((r) => (
@@ -241,7 +265,7 @@ export function NewLoopDialog({
             <select
               value={vault}
               onChange={(e) => setVault(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded outline-none focus:border-gray-500 bg-white"
+              className="w-full px-3 py-2.5 sm:py-1.5 text-base sm:text-sm border border-gray-300 rounded outline-none focus:border-gray-500 bg-white"
             >
               {vaults.length === 0 && <option value="default">default</option>}
               {vaults.map((v) => (
@@ -259,34 +283,26 @@ export function NewLoopDialog({
             )}
           </DialogField>
 
-          <DialogField label="Name" hint="Optional — defaults to 'untitled'.">
-            <input
-              ref={inputRef}
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="refactor-gateway"
-              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded outline-none focus:border-gray-500"
-            />
-          </DialogField>
-
-          <div className="flex justify-end gap-2 mt-2 pt-3 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 h-8 text-sm rounded text-gray-700 hover:bg-gray-100"
-            >
-              cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy}
-              className="px-3 h-8 text-sm rounded bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              {busy ? "creating…" : "create"}
-            </button>
-          </div>
         </form>
+
+        {/* Sticky footer — always visible */}
+        <div className="shrink-0 px-4 sm:px-5 py-3 border-t border-gray-100 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 h-11 sm:h-8 text-sm rounded text-gray-700 hover:bg-gray-100 active:bg-gray-200"
+          >
+            cancel
+          </button>
+          <button
+            type="submit"
+            form="new-loop-form"
+            disabled={busy}
+            className="px-6 h-11 sm:h-8 text-sm rounded bg-gray-900 text-white hover:bg-gray-700 active:bg-gray-800 disabled:opacity-50 font-medium"
+          >
+            {busy ? "creating…" : "create"}
+          </button>
+        </div>
       </div>
     </div>
   )

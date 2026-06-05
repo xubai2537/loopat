@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { MessageCircle, X, ArrowLeft, Plus, ExternalLink } from "lucide-react"
 import { useNavigate } from "react-router-dom"
+import { useIsMobile } from "../lib/useIsMobile"
 import {
   listChatConversations,
   listChatMessages,
@@ -41,6 +42,7 @@ function formatTime(ts: number): string {
 
 export function FloatingDm({ me }: { me: string }) {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const [open, setOpen] = useState(() => localStorage.getItem(LS_OPEN) === "1")
   const [activeConvId, setActiveConvId] = useState<string | null>(() => localStorage.getItem(LS_CONV))
   const [showPicker, setShowPicker] = useState(false)
@@ -207,7 +209,7 @@ export function FloatingDm({ me }: { me: string }) {
           type="button"
           onClick={() => setOpen(true)}
           className={
-            "fixed bottom-20 right-5 z-30 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors " +
+            `fixed ${isMobile ? "bottom-24" : "bottom-20"} right-5 z-30 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors ` +
             (totalUnread > 0
               ? "bg-gray-700 text-white animate-pulse"
               : "bg-gray-700 text-white hover:bg-gray-500")
@@ -224,7 +226,7 @@ export function FloatingDm({ me }: { me: string }) {
       )}
 
       {open && (
-        <div className="fixed bottom-20 right-5 z-30 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[32rem] max-h-[calc(100dvh-2.5rem)] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
+        <div className={`fixed ${isMobile ? "bottom-24" : "bottom-20"} right-5 z-30 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[32rem] max-h-[calc(100dvh-2.5rem)] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden`}>
           <header className="h-10 shrink-0 border-b border-gray-200 px-2 flex items-center gap-1">
             {active ? (
               <button
