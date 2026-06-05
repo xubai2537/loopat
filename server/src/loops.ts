@@ -1,9 +1,9 @@
+import { join, dirname } from "node:path"
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rename, writeFile, stat, symlink, lstat, rm } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { existsSync, chmodSync } from "node:fs"
-import { join } from "node:path"
 import { tmpdir } from "node:os"
 import {
   loopsDir,
@@ -36,6 +36,7 @@ import {
   workspaceMemoryDir,
   hostDeployKeyPath,
   personalGitCryptKeyPath,
+  onboardingDismissedPath,
   loopHistoryPath,
   loopChatHistoryPath,
   loopKindClaudePath,
@@ -719,6 +720,8 @@ export type OnboardingStatus = {
 /** Resolve the active provider's current onboarding view (done, or next form).
  *  The provider owns the whole flow; loopat just feeds it context. */
 async function onboardingView(userId: string, vault: string): Promise<OnboardingStatus> {
+  // User dismissed the onboarding gate → skip all provider checks.
+  if (existsSync(onboardingDismissedPath(userId))) return { gated: false, done: true }
   const provider = await resolveProvider()
   if (!provider?.onboarding) return { gated: false, done: true }
   const personalRepoImported = !(await isPersonalFresh(userId))
@@ -738,6 +741,14 @@ async function onboardingView(userId: string, vault: string): Promise<Onboarding
 
 export async function userOnboarding(userId: string, vault: string = "default"): Promise<OnboardingStatus> {
   return onboardingView(userId, vault)
+}
+
+/** Dismiss the onboarding gate — write a marker that `onboardingView` checks
+ *  before running any provider logic. Idempotent; the gate stays cleared. */
+export async function dismissOnboarding(userId: string): Promise<void> {
+  const p = onboardingDismissedPath(userId)
+  try { await mkdir(dirname(p), { recursive: true }) } catch {}
+  await writeFile(p, `${new Date().toISOString()}\n`)
 }
 
 /**
