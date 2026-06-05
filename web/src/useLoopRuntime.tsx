@@ -56,6 +56,8 @@ type RawMsg = {
   role: "user" | "assistant"
   content: any[]
   parent_tool_use_id?: string | null
+  /** Marker for shell (!) output — suppresses retry button. */
+  _shell?: boolean
 }
 
 function asContentArray(c: any): any[] {
@@ -846,6 +848,18 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
 
   const enqueueMessage = useCallback((text: string, files?: { path: string; content: string }[]) => {
     const ws = wsRef.current
+
+    // ! shell command (CC "!" bang mode). !! escapes to literal "!".
+    if (text.startsWith("!") && !text.startsWith("!!")) {
+      const cmd = text.slice(1).trim()
+      if (cmd && ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "shell", command: cmd, id: `shell_${Date.now()}_${Math.random().toString(36).slice(2, 10)}` }))
+      }
+      return
+    }
+    // !! escapes to literal "!"
+    if (text.startsWith("!!")) text = text.slice(1)
+
     if (!running) {
       setRunning(true)
       setTurnGeneration((v) => v + 1)
@@ -1422,6 +1436,28 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
               content: [{ type: "clear-divider", ts: m.ts ?? "", by: m.by ?? "" } as any],
             },
           ])
+        } else if (m?.type === "shell_result" && typeof m.id === "string") {
+          // One-shot shell command result (CC "!" bang mode).
+          const stdout = typeof m.stdout === "string" ? m.stdout.replace(/\x1b\[\d+(;\d+)*m/g, "") : ""
+          const stderr = typeof m.stderr === "string" ? m.stderr.replace(/\x1b\[\d+(;\d+)*m/g, "") : ""
+          const exitCode = typeof m.exitCode === "number" ? m.exitCode : (m.error ? null : 0)
+          const error = typeof m.error === "string" ? m.error : null
+          const parts: string[] = []
+          if (stdout) parts.push(stdout)
+          if (stderr) parts.push(stderr)
+          if (error) parts.push(`error: ${error}`)
+          const text = parts.join("\n").trim() || (error ?? "bash completed with no output")
+          const suffix = exitCode != null && exitCode !== 0 ? `\n[exit ${exitCode}]` : ""
+          setRaw((prev) => {
+            // Guard: skip if we already have a message with this shell id
+            // (prevents duplicates from history replay vs live insert).
+            if (prev.some((r) => r.id === m.id || r.id === ("sh_" + m.id))) return prev
+            return [
+              ...prev,
+              { id: m.id, role: "user", content: [{ type: "text", text: "$ " + (m._cmd || "shell") }], _shell: true },
+              { id: "sh_" + m.id, role: "assistant", content: [{ type: "text", text: "```bash\n" + text + suffix + "\n```" }], _shell: true },
+            ]
+          })
         }
       }
       ws.onmessage = (e) => {
@@ -1567,6 +1603,18 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
     } catch {}
     if (!text) return
     const ws = wsRef.current
+
+    // ! shell command (CC "!" bang mode). !! escapes to literal "!".
+    if (text.startsWith("!") && !text.startsWith("!!")) {
+      const cmd = text.slice(1).trim()
+      if (cmd && ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "shell", command: cmd, id: `shell_${Date.now()}_${Math.random().toString(36).slice(2, 10)}` }))
+      }
+      return
+    }
+    // !! escapes to literal "!"
+    if (text.startsWith("!!")) text = text.slice(1)
+
     setRunning(true)
     // Reset per-turn output counter only on fresh user requests, not on
     // tool-use continuations (which trigger message_start within the same turn).

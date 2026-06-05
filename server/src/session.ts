@@ -1178,6 +1178,13 @@ class LoopSession {
     console.log(`[loop:${this.id.slice(0, 8)}] detach → viewers=${this.subscribers.size}`)
   }
 
+  /** Push an arbitrary message into history + persist (no broadcast — caller
+   *  sends the result via another channel). Used by shell (!) commands. */
+  injectHistory(msg: any) {
+    this.history.push(msg)
+    this.persist(msg)
+  }
+
   async sendUserText(text: string, permissionMode?: SdkPermissionMode) {
     updateLoopStatus(this.id, `User: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`)
     if (this.generating || this.messageQueue.length > 0 || this.queueProcessing) {

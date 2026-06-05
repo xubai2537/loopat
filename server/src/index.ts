@@ -2,10 +2,10 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { createBunWebSocket } from "hono/bun"
 import { existsSync } from "node:fs"
-import { execFile, execFileSync } from "node:child_process"
+import { execFile, execFileSync, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { listLoops, createLoop, getLoop, loopExists, patchLoopMeta, backfillAllMounts, ensureWorkspaceDirs, provisionUserPersonal, importPersonalFromRepo, setupPersonalViaProvider, listPersonalReposViaProvider, authenticateViaProvider, isPersonalFresh, ensureUiNotesWorktree, syncUiNotes, ffUpdateUiNotes, discardUiNotes, notesBehind, inspectPersonalDirty, syncPersonalToRemote, deletePersonalVault, pullPersonalFromRemote, pushPersonalToRemote, ensureContextMounts, effectiveDriver, isDriver, distillLoop, inspectRepoSync, pullRepoFromRemote, pushRepoToRemote, listVaultPublicKeys, userOnboarding, submitOnboarding, dismissOnboarding } from "./loops"
-import { getEphemeralHostPort, probePodman, stopAllWorkspaceContainers, ensureServeContainer, ensurePortProxyContainer, ensureSandboxImage } from "./podman"
+import { getEphemeralHostPort, probePodman, stopAllWorkspaceContainers, ensureServeContainer, ensurePortProxyContainer, ensureSandboxImage, buildPodmanExecArgs, ensureContainer, containerName, V_LOOP_WORKDIR } from "./podman"
 import { startMcpAuth, completeMcpAuth, probeOAuthSupport, evictOAuthProbe, parseBearerEnvName, mcpRequiredEnvs, parseTemplateVars, type OAuthSupport } from "./mcp-oauth"
 import { DEFAULT_VAULT, loadVaultEnvs } from "./vaults"
 import {
@@ -3208,6 +3208,62 @@ app.get(
                 }
               } catch {}
             }
+          } else if (msg?.type === "shell" && typeof msg.command === "string" && typeof msg.id === "string") {
+            // One-shot shell command in the sandbox (CC "!" bang mode).
+            // Runs via podman exec with a 30s timeout; sends back stdout/stderr.
+            const cmd = msg.command.trim()
+            if (cmd.length > 4096) {
+              try { ws.send(JSON.stringify({ type: "shell_result", id: msg.id, error: "command too long" })) } catch {}
+              return
+            }
+            if (!meta || (userId && !isDriver(meta, userId))) {
+              try { ws.send(JSON.stringify({ type: "shell_result", id: msg.id, error: "only the driver can run shell commands" })) } catch {}
+              return
+            }
+            if (meta.archived) {
+              try { ws.send(JSON.stringify({ type: "shell_result", id: msg.id, error: "loop is archived" })) } catch {}
+              return
+            }
+            ;(async () => {
+              try {
+                await ensureContainer({ loopId: id, createdBy: meta.createdBy })
+                const execArgs = ["exec", "--workdir", V_LOOP_WORKDIR(id), containerName(id), "bash", "-c", cmd]
+                const child = spawn("podman", execArgs, { stdio: ["ignore", "pipe", "pipe"] })
+                const chunks: Buffer[] = []
+                const errChunks: Buffer[] = []
+                child.stdout.on("data", (d: Buffer) => chunks.push(d))
+                child.stderr.on("data", (d: Buffer) => errChunks.push(d))
+                const timedOut = await new Promise<boolean>((resolve) => {
+                  const t = setTimeout(() => { child.kill(); resolve(true) }, 30_000)
+                  child.on("close", () => { clearTimeout(t); resolve(false) })
+                })
+                const out = Buffer.concat(chunks).toString("utf8").replace(/\r\n/g, "\n")
+                const err = Buffer.concat(errChunks).toString("utf8").replace(/\r\n/g, "\n")
+                const now = Date.now()
+                if (timedOut) {
+                  try { ws.send(JSON.stringify({ type: "shell_result", id: msg.id, _cmd: cmd, stdout: out, stderr: err, exitCode: null, error: "timed out (30s)" })) } catch {}
+                } else {
+                  const exitCode = child.exitCode ?? 1
+                  try { ws.send(JSON.stringify({ type: "shell_result", id: msg.id, _cmd: cmd, stdout: out, stderr: err, exitCode })) } catch {}
+                  // Inject into session history so shell output survives refresh
+                  // and replays for new subscribers. Use same shape as WS messages.
+                  const outText = [out, err].filter(Boolean).join("\n").trim() || "bash completed with no output"
+                  const suffix = exitCode !== 0 ? "\n[exit " + exitCode + "]" : ""
+                  session.injectHistory({
+                    type: "user",
+                    message: { role: "user", content: [{ type: "text", text: "$ " + cmd }] },
+                    uuid: msg.id,
+                  })
+                  session.injectHistory({
+                    type: "assistant",
+                    message: { role: "assistant", content: [{ type: "text", text: "```bash\n" + outText + suffix + "\n```" }] },
+                    uuid: "sh_" + msg.id,
+                  })
+                }
+              } catch (e: any) {
+                try { ws.send(JSON.stringify({ type: "shell_result", id: msg.id, stdout: "", stderr: "", exitCode: 1, error: e?.message ?? String(e) })) } catch {}
+              }
+            })()
           }
         } catch (e) {
           console.error("ws message parse error", e)

@@ -117,7 +117,7 @@ export default function AssistantMessage() {
   // Retry icon only on the LAST completed (non-running) assistant message.
   const isRunning = useAuiState((s) => s.message.status?.type === "running");
   const isLast = useAuiState((s) => s.message.isLast);
-  const showRetry = !isRunning && isLast;
+  const showRetry = !isRunning && isLast && !textContent.startsWith("```bash");
 
   const time = extractTime(messageId);
   // Per-turn stats render once per turn, on the LAST assistant message of the
