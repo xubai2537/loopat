@@ -216,8 +216,8 @@ export function PersonalRepoPanel({ onDone, initialToken }: { onDone?: () => voi
   const ghProviderLabel = ghProvider === "github" ? "GitHub" : ghProvider
   const ghRepoExists = ghRepos.some((r) => r.name === ghRepoName.trim())
   const ghRepoWebUrl =
-    status?.gitHost?.baseUrl && ghLogin && ghRepoName.trim()
-      ? `${status.gitHost.baseUrl.replace(/\/+$/, "")}/${ghLogin}/${ghRepoName.trim()}`
+    ghLogin && ghRepoName.trim()
+      ? `${(status?.gitHost?.baseUrl ?? "https://github.com").replace(/\/+$/, "")}/${ghLogin}/${ghRepoName.trim()}`
       : null
 
   if (loading) {
@@ -359,8 +359,13 @@ export function PersonalRepoPanel({ onDone, initialToken }: { onDone?: () => voi
         ))}
       </div>
 
+      {/* Device-flow hand-off: token prefilled, repos loading — skip the paste UI. */}
+      {step === "token" && initialToken && (
+        <div className="text-sm text-gray-400 py-8 text-center">loading your repos…</div>
+      )}
+
       {/* ── Step 1: token ── */}
-      {step === "token" && (
+      {step === "token" && !initialToken && (
         <div className="flex flex-col gap-3">
           <div className="text-[11px] text-gray-500 leading-relaxed">
             Paste your {ghProviderLabel} token. Loopat will list your repos so you can
