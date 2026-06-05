@@ -200,6 +200,7 @@ export default function Composer({ pickedFile, editorSelection }: { pickedFile?:
       suppressSlashRef.current = false;
     }
     if (e.key === "Enter" && !e.nativeEvent.isComposing && !e.shiftKey && isRunning) {
+      if (window.matchMedia("(pointer: coarse) and (not (any-pointer: fine))").matches) return;
       e.preventDefault();
       handleEnqueue();
       return;
@@ -344,6 +345,7 @@ export default function Composer({ pickedFile, editorSelection }: { pickedFile?:
             autoFocus
             aria-label="Message input"
             onKeyDown={handleKeyDown}
+            unstable_insertNewlineOnTouchEnter
           />
 
           {/* Toolbar */}
