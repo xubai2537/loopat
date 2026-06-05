@@ -173,6 +173,7 @@ export default function AssistantMessage() {
           case "group-reasoning": {
             const running = part.status.type === "running";
             const charCount = (part as any).indices?.reduce((sum: number, i: number) => {
+              if (i >= messageParts.length) return sum;
               return sum + ((messageParts[i] as any)?.text?.length ?? 0);
             }, 0) ?? 0;
             const label = charCount > 0
