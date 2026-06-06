@@ -193,10 +193,14 @@ export const githubProvider: GitHostProvider = {
         },
       }
     }
-    // Step 2: need at least one usable AI key. Judge by resolved providers (key
-    // already expanded from vault) — repo seeded anthropic with a baseUrl/model.
+    // Step 2: need at least one usable AI key. Check personal config first
+    // (keys already expanded from vault), then workspace-shared providers so
+    // users can skip the key-entry form when the workspace already has keys.
     const providers = (ctx.config?.providers ?? {}) as Record<string, any>
-    const hasKey = Object.values(providers).some((p) => p && typeof p.apiKey === "string" && p.apiKey.trim().length > 0)
+    const hasPersonalKey = Object.values(providers).some((p) => p && typeof p.apiKey === "string" && p.apiKey.trim().length > 0)
+    const wsProviders = (ctx.workspaceConfig?.providers ?? {}) as Record<string, any>
+    const hasWorkspaceKey = Object.values(wsProviders).some((p) => p && typeof p.apiKey === "string" && p.apiKey.trim().length > 0)
+    const hasKey = hasPersonalKey || hasWorkspaceKey
     const anthropic = providers.anthropic ?? {}
     if (!hasKey) {
       return {

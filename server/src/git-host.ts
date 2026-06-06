@@ -117,6 +117,10 @@ export interface GitHostProvider {
      *  the provider can run its own "does this file/dir exist?" checks against
      *  e.g. `${repoDir}/.loopat/...`. The provider may import node:fs itself. */
     repoDir: string | null
+    /** Workspace-level provider config (from ~/.loopat/config.json), so the
+     *  provider can skip the "enter an API key" step when the workspace already
+     *  has keys configured for shared use. null when unreadable. */
+    workspaceConfig: Record<string, unknown> | null
   }): Promise<OnboardingView>
 
 

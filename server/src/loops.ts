@@ -729,8 +729,12 @@ async function onboardingView(userId: string, vault: string): Promise<Onboarding
   const vaultEnvs = personalRepoImported ? await loadVaultEnvs(userId, vault) : {}
   const config = personalRepoImported ? ((await loadPersonalConfig(userId, vault)) as Record<string, unknown>) : {}
   const repoDir = personalRepoImported ? personalDir(userId) : null
+  // Also load workspace config so the provider can skip the "enter an API key"
+  // step when the workspace already has provider keys configured.
+  let workspaceConfig: Record<string, unknown> | null = null
+  try { workspaceConfig = (await loadConfig()) as unknown as Record<string, unknown> } catch { /* leave null */ }
   try {
-    const view = await provider.onboarding({ userId, vaultEnvs, config, personalRepoImported, repoDir })
+    const view = await provider.onboarding({ userId, vaultEnvs, config, personalRepoImported, repoDir, workspaceConfig })
     return { gated: true, ...view }
   } catch (e: any) {
     // Fail OPEN: a broken onboarding impl must not lock the user out.
