@@ -56,7 +56,8 @@ import {
   personalReposDir,
   loopsDir,
 } from "./paths"
-import { loadConfig, loadPersonalConfig, savePersonalConfig, saveWorkspaceConfig, loadTokenUsage, getActiveProvider, readPersonalDiskRaw, savePersonalDisk, describeApiKeyRef, writeVaultEnv, deleteVaultEnv, loadA2AConfig, saveA2AConfig, type ProviderConfig, type ModelEntry } from "./config"
+import { loadConfig, loadPersonalConfig, savePersonalConfig, saveWorkspaceConfig, getActiveProvider, readPersonalDiskRaw, savePersonalDisk, describeApiKeyRef, writeVaultEnv, deleteVaultEnv, loadA2AConfig, saveA2AConfig, type ProviderConfig, type ModelEntry } from "./config"
+import { queryUserTokenUsage, queryWorkspaceTokenUsage, queryDailyTokenUsage, queryLoopTokenUsage } from "./usage"
 import { createApiToken, listApiTokens, revokeApiToken } from "./api-tokens"
 import { listBoards, createBoard, renameBoard, listKanbanColumns, addCard, toggleCard, deleteCard, moveCard, updateCardMeta, updateCardBlock, reorderCards, createColumn, deleteColumn, readKanbanConfig, saveColumnOrder, setColumnColor, renameColumn, assignDriverForCard, createLoopFromCard, linkLoopToCard, kanbanUserCtx } from "./kanban"
 import { printBootstrapBanner, printReadyLine } from "./bootstrap"
@@ -623,8 +624,7 @@ app.post("/api/admin/system/pull", requireAdmin, async (c) => {
 app.get("/api/settings/personal", requireAuth, async (c) => {
   const userId = c.get("userId") as string
   const cfg = await loadPersonalConfig(userId)
-  // Recompute token usage from persisted message histories (modelUsage in result messages)
-  const tokenUsage = await recomputeTokenUsage(userId)
+  const tokenUsage = queryUserTokenUsage(userId)
   const providers: Record<string, { models: ModelEntry[]; baseUrl: string; hasKey: boolean; enabled: boolean; maxContextTokens?: number }> = {}
   for (const [name, p] of Object.entries(cfg.providers)) {
     providers[name] = {
@@ -1013,7 +1013,7 @@ app.get("/api/settings/workspace", requireAuth, requireAdmin, async (c) => {
       providers[name] = { models: p.models, baseUrl: p.baseUrl, hasKey: !!(p as any).apiKey, enabled: p.enabled }
     }
   }
-  const tokenUsage = await recomputeWorkspaceTokenUsage()
+  const tokenUsage = queryWorkspaceTokenUsage()
   return c.json({
     providers,
     default: cfg.default ?? "",
@@ -1036,201 +1036,22 @@ app.put("/api/settings/workspace", requireAuth, requireAdmin, async (c) => {
 
 app.get("/api/settings/token-usage/daily", requireAuth, async (c) => {
   const userId = c.get("userId") as string
-  const daily = await recomputeDailyTokenUsage(userId)
-  return c.json(daily)
+  return c.json(queryDailyTokenUsage(userId))
 })
 
 app.get("/api/settings/token-usage/loops", requireAuth, async (c) => {
   const userId = c.get("userId") as string
-  const loops = await recomputeLoopTokenUsage(userId)
-  return c.json(loops)
+  const rows = queryLoopTokenUsage(userId)
+  const allLoops = await listLoops()
+  const loopMap = new Map(allLoops.map((l) => [l.id, l]))
+  const result = rows.map((r) => ({
+    ...r,
+    title: loopMap.get(r.loopId)?.title || "Untitled",
+  }))
+  return c.json(result)
 })
 
-// ── token usage recompute helpers ──
-
 import { readFile, writeFile, appendFile, mkdir } from "node:fs/promises"
-
-type TokenUsageEntry = { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }
-
-function newEntry(): TokenUsageEntry {
-  return { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
-}
-
-function addUsage(e: TokenUsageEntry, mu: any) {
-  e.inputTokens += mu.inputTokens ?? 0
-  e.outputTokens += mu.outputTokens ?? 0
-  e.cacheReadInputTokens += mu.cacheReadInputTokens ?? 0
-  e.cacheCreationInputTokens += mu.cacheCreationInputTokens ?? 0
-}
-
-async function recomputeTokenUsage(userId: string): Promise<Record<string, TokenUsageEntry>> {
-  const usage: Record<string, TokenUsageEntry> = {}
-  try {
-    const allLoops = await listLoops()
-    const userLoops = allLoops.filter((l) => l.createdBy === userId)
-    for (const loop of userLoops) {
-      const hp = loopHistoryPath(loop.id)
-      if (!existsSync(hp)) continue
-      let raw: string
-      try { raw = await readFile(hp, "utf8") } catch { continue }
-      for (const line of raw.split("\n")) {
-        if (!line) continue
-        try {
-          const msg = JSON.parse(line)
-          if (msg.type === "result" && msg.modelUsage) {
-            for (const [model, u] of Object.entries(msg.modelUsage)) {
-              const mu = u as any
-              const entry = usage[model] ?? newEntry()
-              addUsage(entry, mu)
-              usage[model] = entry
-            }
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-  return usage
-}
-
-async function recomputeWorkspaceTokenUsage(): Promise<Record<string, TokenUsageEntry>> {
-  const usage: Record<string, TokenUsageEntry> = {}
-  try {
-    const allLoops = await listLoops()
-    for (const loop of allLoops) {
-      const hp = loopHistoryPath(loop.id)
-      if (!existsSync(hp)) continue
-      let raw: string
-      try { raw = await readFile(hp, "utf8") } catch { continue }
-      for (const line of raw.split("\n")) {
-        if (!line) continue
-        try {
-          const msg = JSON.parse(line)
-          if (msg.type === "result" && msg.modelUsage) {
-            for (const [model, u] of Object.entries(msg.modelUsage)) {
-              const mu = u as any
-              const entry = usage[model] ?? newEntry()
-              addUsage(entry, mu)
-              usage[model] = entry
-            }
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-  return usage
-}
-
-async function recomputeDailyTokenUsage(userId: string): Promise<Record<string, Record<string, TokenUsageEntry>>> {
-  // daily[model][date] = { inputTokens, outputTokens, ... }
-  const daily: Record<string, Record<string, TokenUsageEntry>> = {}
-  try {
-    const allLoops = await listLoops()
-    const userLoops = allLoops.filter((l) => l.createdBy === userId)
-    for (const loop of userLoops) {
-      const hp = loopHistoryPath(loop.id)
-      if (!existsSync(hp)) continue
-      let raw: string
-      try { raw = await readFile(hp, "utf8") } catch { continue }
-      // Fallback date for historical messages without _ts: loop creation date
-      const fallbackDate = (loop.createdAt ?? new Date().toISOString()).slice(0, 10)
-      let currentDate = fallbackDate
-      for (const line of raw.split("\n")) {
-        if (!line) continue
-        try {
-          const msg = JSON.parse(line)
-          // Track date: explicit _ts wins, clear-boundary ts updates the sliding window
-          if (msg.type === "clear-boundary" && typeof msg.ts === "string") {
-            currentDate = msg.ts.slice(0, 10)
-          }
-          const ts = typeof msg._ts === "string" ? msg._ts : null
-          const date = ts ? ts.slice(0, 10) : currentDate
-          if (msg.type === "result" && msg.modelUsage) {
-            for (const [model, u] of Object.entries(msg.modelUsage)) {
-              const mu = u as any
-              daily[model] ??= {}
-              const entry = daily[model][date] ?? newEntry()
-              addUsage(entry, mu)
-              daily[model][date] = entry
-            }
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-  return daily
-}
-
-async function recomputeLoopTokenUsage(userId: string): Promise<Array<{
-  loopId: string
-  title: string
-  model: string
-  inputTokens: number
-  outputTokens: number
-  cacheReadInputTokens: number
-  cacheCreationInputTokens: number
-  lastActivity: string
-}>> {
-  const loops: Array<{
-    loopId: string
-    title: string
-    model: string
-    inputTokens: number
-    outputTokens: number
-    cacheReadInputTokens: number
-    cacheCreationInputTokens: number
-    lastActivity: string
-  }> = []
-  try {
-    const allLoops = await listLoops()
-    const userLoops = allLoops.filter((l) => l.createdBy === userId)
-    for (const loop of userLoops) {
-      const hp = loopHistoryPath(loop.id)
-      if (!existsSync(hp)) continue
-      let raw: string
-      try { raw = await readFile(hp, "utf8") } catch { continue }
-      let inputTokens = 0
-      let outputTokens = 0
-      let cacheReadInputTokens = 0
-      let cacheCreationInputTokens = 0
-      const models = new Set<string>()
-      let lastActivity = loop.createdAt ?? ""
-      for (const line of raw.split("\n")) {
-        if (!line) continue
-        try {
-          const msg = JSON.parse(line)
-          if (msg._ts) lastActivity = msg._ts
-          if (msg.type === "result" && msg.modelUsage) {
-            for (const [, mu] of Object.entries(msg.modelUsage as Record<string, any>)) {
-              const m = mu as any
-              inputTokens += m.inputTokens ?? 0
-              outputTokens += m.outputTokens ?? 0
-              cacheReadInputTokens += m.cacheReadInputTokens ?? 0
-              cacheCreationInputTokens += m.cacheCreationInputTokens ?? 0
-            }
-            for (const model of Object.keys(msg.modelUsage)) {
-              models.add(model)
-            }
-          }
-        } catch {}
-      }
-      if (inputTokens > 0 || outputTokens > 0) {
-        loops.push({
-          loopId: loop.id,
-          title: loop.title || "Untitled",
-          model: Array.from(models).join(", "),
-          inputTokens,
-          outputTokens,
-          cacheReadInputTokens,
-          cacheCreationInputTokens,
-          lastActivity,
-        })
-      }
-    }
-  } catch {}
-  // Sort by last activity descending
-  loops.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
-  return loops
-}
 
 // ── personal repo bootstrap (deploy-key flow) ──
 //

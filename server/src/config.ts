@@ -4,7 +4,6 @@ import { dirname, join } from "node:path"
 import {
   personalLoopatConfigPath,
   personalLoopatDir,
-  personalTokenUsagePath,
   personalVaultDir,
   personalVaultEnvPath,
   personalVaultEnvsDir,
@@ -545,32 +544,6 @@ export async function loadPersonalClaudeJson(user: string): Promise<WorkspaceCla
 
 // ── token usage ──
 
-export type TokenUsage = Record<string, { inputTokens: number; outputTokens: number }>
-
-export async function loadTokenUsage(user: string): Promise<TokenUsage> {
-  const p = personalTokenUsagePath(user)
-  if (!existsSync(p)) return {}
-  try {
-    return JSON.parse(await readFile(p, "utf8")) as TokenUsage
-  } catch {
-    return {}
-  }
-}
-
-export async function saveTokenUsage(user: string, usage: TokenUsage): Promise<void> {
-  await mkdir(personalLoopatDir(user), { recursive: true })
-  await writeFile(personalTokenUsagePath(user), JSON.stringify(usage, null, 2) + "\n")
-}
-
-export async function addTokenUsage(user: string, model: string, inputTokens: number, outputTokens: number): Promise<void> {
-  if (!model || (inputTokens === 0 && outputTokens === 0)) return
-  const usage = await loadTokenUsage(user)
-  const entry = usage[model] ?? { inputTokens: 0, outputTokens: 0 }
-  entry.inputTokens += inputTokens
-  entry.outputTokens += outputTokens
-  usage[model] = entry
-  await saveTokenUsage(user, usage)
-}
 
 // ── config persistence ──
 

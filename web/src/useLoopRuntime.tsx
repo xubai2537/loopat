@@ -571,10 +571,9 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
   const tokenUsageRef = useRef(0)
   const [tokenUsageVersion, setTokenUsageVersion] = useState(0)
   // Live token tracking from stream events during the current model turn.
-  // input: from message_start, output: estimated from content_block_delta chars
-  // or precise from message_delta usage. Reset when result arrives.
+  // input: from message_start (precise), output: from message_delta (precise).
+  // No chars/3.5 estimation — only API-reported values.
   const streamingInputRef = useRef(0)
-  const streamingOutputCharsRef = useRef(0)
   const streamingTokensRef = useRef(0)
   const [streamingTokensVersion, setStreamingTokensVersion] = useState(0)
   // Context-window token count for the pie chart. Set from API input_tokens
@@ -582,17 +581,13 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
   // authoritative measure of context usage (SDK may compress/summarize).
   const contextTokensRef = useRef(0)
   const [contextTokensVersion, setContextTokensVersion] = useState(0)
-  // Output token count for ClaudeStatus display. Updated on content_block_delta
-  // (chars/3.5 estimate) and message_delta (precise). Reset on message_start.
-  // ClaudeStatus reads it directly via rAF — no setState on the hot path.
+  // Output token count for ClaudeStatus display. Updated on message_delta
+  // (precise API value only). ClaudeStatus reads it via rAF.
   const streamingOutputRef = useRef(0)
-  // Cumulative output chars across all sub-turns within a single user request.
-  // Only reset on new user message (onNew) and reconnect — never on
-  // message_start, because tool-use / thinking continuations emit additional
-  // message_start events that would incorrectly drop the display counter.
-  // Mirrors the official TUI's responseLengthRef which is scoped to the full
-  // query lifecycle, not individual sub-turns.
-  const displayOutputCharsRef = useRef(0)
+  // Cumulative precise output tokens across all sub-turns within a single user
+  // request. Only updated on message_delta (precise API value). Reset on new
+  // user message (onNew) and reconnect — never on message_start.
+  const cumulativeOutputTokensRef = useRef(0)
   // Arrow-up (true) until the first token arrives for the current (sub-)turn.
   // Set true on message_start / onNew, false on content_block_delta.
   const waitingForResponseRef = useRef(true)
@@ -977,7 +972,7 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
         .trim()
       if (!text) return
       setRunning(true)
-      displayOutputCharsRef.current = 0
+      cumulativeOutputTokensRef.current = 0
       streamingOutputRef.current = 0
       waitingForResponseRef.current = true
       setTurnGeneration((v) => v + 1)
@@ -1026,10 +1021,9 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
       tokenUsageRef.current = 0
       setTokenUsageVersion((v) => v + 1)
       streamingInputRef.current = 0
-      streamingOutputCharsRef.current = 0
       streamingTokensRef.current = 0
       setStreamingTokensVersion((v) => v + 1)
-      displayOutputCharsRef.current = 0
+      cumulativeOutputTokensRef.current = 0
       streamingOutputRef.current = 0
       waitingForResponseRef.current = true
       contextTokensRef.current = 0
@@ -1356,7 +1350,6 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
           if (ev?.type === "message_start") {
             if (!loadingHistoryRef.current) setRunning(true)
             streamingInputRef.current = ev?.message?.usage?.input_tokens ?? 0
-            streamingOutputCharsRef.current = 0
             streamingTokensRef.current = streamingInputRef.current
             contextTokensRef.current = streamingInputRef.current
             waitingForResponseRef.current = true
@@ -1365,26 +1358,13 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
           } else if (ev?.type === "message_delta") {
             const u = ev?.usage
             if (u && typeof u.output_tokens === "number") {
+              cumulativeOutputTokensRef.current += u.output_tokens
               streamingTokensRef.current = streamingInputRef.current + u.output_tokens
+              streamingOutputRef.current = cumulativeOutputTokensRef.current
               setStreamingTokensVersion((v) => v + 1)
-              // Keep the chars/3.5 estimate for consistency across sub-turns.
-              // The API's output_tokens is per-sub-turn and would cause a drop.
-              streamingOutputRef.current = Math.round(displayOutputCharsRef.current / 3.5)
             }
           } else if (ev?.type === "content_block_delta") {
-            const d = ev?.delta
-            let deltaLen = 0
-            if (d?.type === "text_delta" && typeof d.text === "string") {
-              deltaLen = d.text.length
-            } else if (d?.type === "thinking_delta" && typeof d.thinking === "string") {
-              deltaLen = d.thinking.length
-            } else if (d?.type === "input_json_delta" && typeof d.partial_json === "string") {
-              deltaLen = d.partial_json.length
-            }
             waitingForResponseRef.current = false
-            // TTFT: first content delta of the turn = first token. turnId IS
-            // turnStartedAt, so (now - turnId) is the time-to-first-token.
-            // Set once per turn (ttftMs starts null, reset at turn start).
             const ttftTurnId = currentTurnIdRef.current
             if (ttftTurnId != null) {
               const e = turnStatsRef.current.get(ttftTurnId)
@@ -1393,25 +1373,6 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
                 setTurnStatsVersion((v) => v + 1)
               }
             }
-            // Per-sub-turn accumulator (resets on message_start) — used for
-            // context-window math (streamingTokens, contextTokens).
-            streamingOutputCharsRef.current += deltaLen
-            const estimated = Math.round(streamingOutputCharsRef.current / 3.5)
-            streamingTokensRef.current = streamingInputRef.current + estimated
-            setStreamingTokensVersion((v) => v + 1)
-            // contextTokensRef intentionally NOT updated here. input_tokens
-            // from message_start is the accurate context-window usage; adding
-            // chars/3.5 output estimate inflates it (especially with verbose
-            // thinking / tool-use JSON), making the pie show "full" when the
-            // real context is much lower. The context growth from this turn's
-            // output is captured at message_delta / result via precise API
-            // token counts.
-            // Cumulative accumulator (never resets mid-turn) — used for the
-            // ClaudeStatus display. Survives tool-use / thinking sub-turn
-            // boundaries so the counter never drops.
-            displayOutputCharsRef.current += deltaLen
-            streamingOutputRef.current = Math.round(displayOutputCharsRef.current / 3.5)
-            // No setState here — ClaudeStatus reads the ref directly via rAF
           }
         } else if (m?.type === "error") {
           setRaw((prev) => [
@@ -1491,35 +1452,8 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
               contextTokensRef.current = Math.round(chars / 3.5)
               setContextTokensVersion((v) => v + 1)
             }
-            // Restore the ClaudeStatus display counter from assistant message
-            // content in the buffer. displayOutputCharsRef is zeroed in connect()
-            // and result messages don't rebuild it, so a resumed active turn
-            // would otherwise start the counter at 0.
-            if (displayOutputCharsRef.current === 0 && replayBufRef.current.length > 0) {
-              let outputChars = 0
-              for (const bufMsg of replayBufRef.current) {
-                if (bufMsg?.type === "assistant" && bufMsg.message?.content) {
-                  for (const block of bufMsg.message.content) {
-                    if (block?.type === "text" && typeof block.text === "string") {
-                      outputChars += block.text.length
-                    } else if (block?.type === "tool_use") {
-                      outputChars += JSON.stringify(block.input ?? {}).length
-                    }
-                  }
-                } else if (bufMsg?.type === "stream_event") {
-                  const d = bufMsg?.event?.delta
-                  if (d?.type === "text_delta" && typeof d.text === "string") {
-                    outputChars += d.text.length
-                  } else if (d?.type === "thinking_delta" && typeof d.thinking === "string") {
-                    outputChars += d.thinking.length
-                  } else if (d?.type === "input_json_delta" && typeof d.partial_json === "string") {
-                    outputChars += d.partial_json.length
-                  }
-                }
-              }
-              displayOutputCharsRef.current = outputChars
-              streamingOutputRef.current = Math.round(outputChars / 3.5)
-            }
+            // On reconnect, output token counter starts at 0 — precise value
+            // arrives with the next message_delta. No chars/3.5 estimation.
             // Detect whether a main-model turn was in-flight when we
             // disconnected (message_start with no result after it). If so,
             // keep running=true so ClaudeStatus stays visible and the
@@ -1616,9 +1550,7 @@ export function useLoopRuntime(loopId: string | null, currentUserId: string, ope
     if (text.startsWith("!!")) text = text.slice(1)
 
     setRunning(true)
-    // Reset per-turn output counter only on fresh user requests, not on
-    // tool-use continuations (which trigger message_start within the same turn).
-    displayOutputCharsRef.current = 0
+    cumulativeOutputTokensRef.current = 0
     streamingOutputRef.current = 0
     waitingForResponseRef.current = true
     setTurnGeneration((v) => v + 1)

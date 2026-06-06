@@ -5,6 +5,7 @@ import { createWriteStream, mkdirSync, existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { loopClaudeDir, loopDir, loopHistoryPath, personalSkillsDir, workspaceTeamSkillsDir } from "./paths"
+import { appendLoopUsage, appendLoopUsageClear, insertUsageDb, type UsageEntry } from "./usage"
 import { resolveSandboxClaudeBinary } from "./claude-binary"
 import { loadConfig, loadPersonalConfig, parseDefault, type ProviderConfig } from "./config"
 import { buildLoopatAppend } from "./system-prompt"
@@ -242,6 +243,8 @@ class LoopSession {
   private queueProcessing = false
   private turnSpan: Span | null = null
   private ttfbSpan: Span | null = null
+  private usageSession = 0
+  private currentDriver: string | null = null
 
   constructor(id: string) {
     this.id = id
@@ -361,7 +364,9 @@ class LoopSession {
       for (const line of raw.split("\n")) {
         if (!line) continue
         try {
-          this.history.push(JSON.parse(line))
+          const msg = JSON.parse(line)
+          this.history.push(msg)
+          if (msg.type === "clear-boundary") this.usageSession++
         } catch {}
       }
     } catch {}
@@ -380,6 +385,7 @@ class LoopSession {
     // all follow this user, not the immutable createdBy. Updated by the
     // /api/loops/:id/drive handoff endpoint; next spawn picks it up here.
     const driver = effectiveDriver(meta)
+    this.currentDriver = driver
 
     const resolved = await withSpan("resolveProvider", async () => {
       return await this.resolveProvider(meta, [
@@ -804,6 +810,9 @@ class LoopSession {
           this.history.push(msg)
           this.persist(msg)
         }
+        if (msg.type === "result" && (msg as any).modelUsage) {
+          this.persistUsage(msg as any)
+        }
         this.broadcast(msg)
         this.updateStatus(msg)
       }
@@ -856,6 +865,35 @@ class LoopSession {
     appendFile(loopHistoryPath(this.id), JSON.stringify(stamped) + "\n").catch((e) => {
       console.error("[loopat] persist failed", e)
     })
+  }
+
+  private persistUsage(msg: { modelUsage: Record<string, any> }) {
+    const ts = new Date().toISOString()
+    const user = this.currentDriver ?? "unknown"
+    const entries: UsageEntry[] = []
+    for (const [model, u] of Object.entries(msg.modelUsage)) {
+      const input = u?.inputTokens ?? 0
+      const output = u?.outputTokens ?? 0
+      if (input === 0 && output === 0) continue
+      entries.push({
+        ts,
+        loopId: this.id,
+        user,
+        model,
+        input,
+        output,
+        cacheRead: u?.cacheReadInputTokens ?? 0,
+        cacheCreate: u?.cacheCreationInputTokens ?? 0,
+        session: this.usageSession,
+      })
+    }
+    if (entries.length === 0) return
+    appendLoopUsage(this.id, entries).catch((e) => {
+      console.error("[loopat] usage.jsonl write failed", e)
+    })
+    try { insertUsageDb(entries) } catch (e) {
+      console.error("[loopat] usage.db insert failed", e)
+    }
   }
 
   private broadcast(msg: any) {
@@ -1498,8 +1536,12 @@ class LoopSession {
     } catch {
       // projects/ doesn't exist yet — nothing to do; SDK state is already empty
     }
-    // 3. Append boundary marker (in-memory + jsonl + broadcast).
-    const marker = { type: "clear-boundary" as const, ts: new Date().toISOString(), by }
+    // 3. Increment usage session counter and record in usage.jsonl.
+    this.usageSession++
+    const ts = new Date().toISOString()
+    appendLoopUsageClear(this.id, this.usageSession, ts).catch(() => {})
+    // 4. Append boundary marker (in-memory + jsonl + broadcast).
+    const marker = { type: "clear-boundary" as const, ts, by }
     this.history.push(marker as any)
     this.persist(marker)
     this.broadcast(marker)
