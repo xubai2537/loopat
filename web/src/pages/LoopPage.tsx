@@ -11,7 +11,7 @@ import { Panel, Group, Separator } from "react-resizable-panels"
 import ChatInterface from "@/components/chat/ChatInterface"
 import { useWorkspace } from "../ctx"
 import { useLoopRuntime, LoopRuntimeProvider } from "../useLoopRuntime"
-import { getContext, distillLoop, listProfiles, type ContextMount, type LoopMeta, markLoopViewed, getServeConfig, type ServeConfig } from "../api"
+import { distillLoop, listProfiles, type LoopMeta, markLoopViewed, getServeConfig, type ServeConfig } from "../api"
 import { SharePage } from "./SharePage"
 import { useIsMobile } from "../lib/useIsMobile"
 import { useLoopStatus } from "../useLoopStatus"
@@ -151,7 +151,6 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
   const [openPanels, setOpenPanels] = useState<RightMode[]>([])
   const [fullscreenPanel, setFullscreenPanel] = useState<RightMode | null>(null)
   const [pickedFile, setPickedFile] = useState<string | null>(null)
-  const [mounts, setMounts] = useState<ContextMount[]>([])
   // sandboxInfo + refresh-sandbox UI removed — profile model re-composes every spawn,
   // so there's nothing to "refresh" mid-loop.
   const [shareOpen, setShareOpen] = useState(false)
@@ -175,7 +174,6 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
   const preparing = loopStatus[meta.id]?.phase === "preparing"
   const prepDetail = loopStatus[meta.id]?.status
   useEffect(() => {
-    getContext(meta.id).then(setMounts)
     markLoopViewed(meta.id)
     if (ws.currentUser?.id) {
       localStorage.setItem(`loopat:lastLoop:${ws.currentUser.id}`, meta.id)
@@ -279,7 +277,6 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
       {!(isMobile && !mobileChromeVisible) && (
         <LoopHeader
           meta={meta}
-          mounts={mounts}
           connected={connected}
           reconnecting={reconnecting}
           running={running}
@@ -463,7 +460,6 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
 
 function LoopHeader({
   meta,
-  mounts,
   connected,
   reconnecting,
   running,
@@ -476,7 +472,6 @@ function LoopHeader({
   showShareButton,
 }: {
   meta: LoopMeta
-  mounts: ContextMount[]
   connected: boolean
   reconnecting: boolean
   running: boolean
@@ -611,11 +606,16 @@ function LoopHeader({
 
       {!collapsed && (
       <>
-      {/* workdir + branch + mode toggles */}
+      {/* repo + branch + mode toggles */}
       <div className="text-xs text-gray-500 mt-1.5 flex items-center gap-2 flex-wrap">
-        <span className="font-mono">~/.loopat/loops/{meta.id.slice(0, 8)}/workdir</span>
-        <span>·</span>
-        <span>main</span>
+        {meta.repo && (
+          <span className="inline-flex items-center gap-1 font-mono text-gray-900">
+            <GitBranch size={12} className="text-gray-400" />
+            {meta.repo}
+            {meta.branch && <span className="text-gray-400">:</span>}
+            {meta.branch && <span className="text-blue-600">{meta.branch}</span>}
+          </span>
+        )}
         {viewers > 0 && (
           <>
             <span>·</span>
@@ -642,31 +642,10 @@ function LoopHeader({
         </div>
       </div>
 
-      {/* context chips */}
-      <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[11px]">
-        <span className="text-gray-400">context:</span>
-        {mounts.map((m) => (
-          <ContextChip key={m.path} label={m.name} value={m.name === "knowledge" ? "ro" : "rw"} />
-        ))}
-      </div>
-
-      {/* profile row — which profiles are active. Profile model re-composes
-          on every spawn, so no "update available" prompt is needed. Each
-          chip shows the profile's description (from CLAUDE.md frontmatter
-          or first heading) as a hover tooltip. */}
+      {/* profile row — which profiles are active */}
       {meta.config?.profiles && meta.config.profiles.length > 0 && (
         <ProfileChipsRow profiles={meta.config.profiles as string[]} />
       )}
-
-      {/* vault row — which credential bundle was bound into this loop's sandbox.
-          Always shows: "default" is the implicit value when meta omits it. */}
-      <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px]">
-        <span className="text-gray-400">vault:</span>
-        <ContextChip
-          label={meta.config?.vault ?? "default"}
-          value="loaded"
-        />
-      </div>
       </>
       )}
     </header>
