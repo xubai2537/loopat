@@ -10,7 +10,7 @@
  * whole-channel dump).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams, useOutletContext } from "react-router-dom"
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { useIsMobile } from "../lib/useIsMobile"
 import { ChatListContent } from "../components/ChatListContent"
@@ -106,6 +106,7 @@ export function ChatPage() {
   const [showNewChannel, setShowNewChannel] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const isMobile = useIsMobile()
+  const { mobileChromeVisible } = useOutletContext<{ mobileChromeVisible: boolean }>()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
   const activeConvIdRef = useRef<string | undefined>(convId)
@@ -502,8 +503,8 @@ export function ChatPage() {
 
   return (
     <div className="flex h-full w-full bg-white">
-      {/* Rail */}
-      {isMobile ? (
+      {/* Rail — hidden on mobile when chrome toggled off */}
+      {isMobile && !mobileChromeVisible ? null : isMobile ? (
         <>
           {sidebarOpen ? (
             <div className="fixed inset-0 z-30" onClick={() => setSidebarOpen(false)}>

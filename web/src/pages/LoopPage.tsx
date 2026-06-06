@@ -4,7 +4,7 @@
  */
 import { useEffect, useState, useMemo, useRef, Fragment } from "react"
 import { createPortal } from "react-dom"
-import { useParams, useNavigate, Navigate, useLocation } from "react-router-dom"
+import { useParams, useNavigate, Navigate, useLocation, useOutletContext } from "react-router-dom"
 import { AssistantRuntimeProvider } from "@assistant-ui/react"
 import { PanelLeftClose, PanelLeftOpen, GitBranch, Globe, Lock, Copy, Check, ChevronDown, Hand, FlaskConical, Maximize2, Minimize2 } from "lucide-react"
 import { Panel, Group, Separator } from "react-resizable-panels"
@@ -66,6 +66,7 @@ function LoopsList({ currentId }: { currentId: string }) {
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("loopat:loopsList:collapsed") === "1")
   const isMobile = useIsMobile()
+  const { mobileChromeVisible } = useOutletContext<{ mobileChromeVisible: boolean }>()
 
   const setCollapsedPersist = (v: boolean) => {
     setCollapsed(v)
@@ -93,6 +94,9 @@ function LoopsList({ currentId }: { currentId: string }) {
       />
     </aside>
   )
+
+  // On mobile, hide rail entirely when chrome is toggled off
+  if (isMobile && !mobileChromeVisible) return null
 
   if (collapsed) {
     return (
@@ -143,6 +147,7 @@ function LoopsList({ currentId }: { currentId: string }) {
 function LoopMain({ meta }: { meta: LoopMeta }) {
   const ws = useWorkspace()
   const isMobile = useIsMobile()
+  const { mobileChromeVisible } = useOutletContext<{ mobileChromeVisible: boolean }>()
   const [openPanels, setOpenPanels] = useState<RightMode[]>([])
   const [fullscreenPanel, setFullscreenPanel] = useState<RightMode | null>(null)
   const [pickedFile, setPickedFile] = useState<string | null>(null)
@@ -270,20 +275,23 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
 
   return (
     <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-      <LoopHeader
-        meta={meta}
-        mounts={mounts}
-        connected={connected}
-        reconnecting={reconnecting}
-        running={running}
-        viewers={viewers}
-        queue={queue}
-        onClearQueue={onClearQueue}
-        openPanels={openPanels}
-        toggleMode={toggleMode}
-        onShareWork={() => setShareOpen(true)}
-        showShareButton={!serveCfg || serveCfg.serveEnabled || serveCfg.serveDynamicEnabled || serveCfg.serveEphemeralEnabled}
-      />
+      {/* Hide per-loop header on mobile when chrome toggled off */}
+      {!(isMobile && !mobileChromeVisible) && (
+        <LoopHeader
+          meta={meta}
+          mounts={mounts}
+          connected={connected}
+          reconnecting={reconnecting}
+          running={running}
+          viewers={viewers}
+          queue={queue}
+          onClearQueue={onClearQueue}
+          openPanels={openPanels}
+          toggleMode={toggleMode}
+          onShareWork={() => setShareOpen(true)}
+          showShareButton={!serveCfg || serveCfg.serveEnabled || serveCfg.serveDynamicEnabled || serveCfg.serveEphemeralEnabled}
+        />
+      )}
       {meta.contextWarnings && meta.contextWarnings.length > 0 && (
         <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800 leading-relaxed">
           <span className="font-semibold">⚠ Context not fully loaded.</span>{" "}
@@ -425,7 +433,7 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
           {renderPanel(mode)}
         </Fragment>
       ))}
-      {isMobile && (
+      {isMobile && mobileChromeVisible && (
         <div className="fixed bottom-0 left-0 z-30 w-9 flex flex-col items-center gap-0.5 pb-2">
           {(["terminal", "editor", "workdir", "git"] as const).map((m) => {
             const active = openPanels.includes(m)

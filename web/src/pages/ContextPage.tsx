@@ -8,7 +8,7 @@
  *   - Header buttons: distill (notes), edit by loop (non-secret), edit (non-knowledge)
  *   - Save → auto-commit (server side)
  */
-import { NavLink, useParams, useNavigate, useSearchParams } from "react-router-dom"
+import { NavLink, useParams, useNavigate, useSearchParams, useOutletContext } from "react-router-dom"
 import {
   vaultList,
   vaultFlatList,
@@ -272,6 +272,7 @@ function VaultPane({ vault, initialFile, initialEditing }: { vault: VaultId; ini
   const [creating, setCreating] = useState<{ type: "file" | "folder"; path: string } | null>(null)
   const [newName, setNewName] = useState("")
   const isMobile = useIsMobile()
+  const { mobileChromeVisible } = useOutletContext<{ mobileChromeVisible: boolean }>()
 
   // initialize expansion and file selection from ?file= query param
   const initRef = useRef(false)
@@ -519,7 +520,8 @@ function VaultPane({ vault, initialFile, initialEditing }: { vault: VaultId; ini
 
   return (
     <div className="flex h-full w-full">
-      {isMobile ? (
+      {/* Rail — hidden on mobile when chrome toggled off */}
+      {isMobile && !mobileChromeVisible ? null : isMobile ? (
         <>
           {sidebarOpen ? (
             <div className="fixed inset-0 z-30" onClick={() => setSidebarOpen(false)}>

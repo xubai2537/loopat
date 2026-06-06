@@ -5,7 +5,7 @@
  * LOOPAT_HOME, server-side).
  */
 import { useEffect, useState } from "react"
-import { MessageCircle, RefreshCw, X, Sun, Moon, ArrowLeft } from "lucide-react"
+import { MessageCircle, RefreshCw, X, Sun, Moon, ArrowLeft, EyeOff, Eye } from "lucide-react"
 import { BrowserRouter, Routes, Route, Navigate, NavLink, Outlet, useNavigate, useMatch, useLocation } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useWorkspaceState, type WorkspaceState } from "./state"
@@ -78,6 +78,9 @@ function Shell({ ws }: { ws: WorkspaceState }) {
   // own "unavailable" state.
   const shareMode = !loggedIn && onLoopRoute
   const showTabBar = isMobile && !shareMode && loggedIn && !onLoopRoute && !onChatDetailRoute
+  // Mobile chrome toggle: hides/shows the header toolbar and sidebar rail together.
+  const onDetailRoute = !!(onLoopRoute || onChatDetailRoute || onSettingsRoute)
+  const [mobileChromeVisible, setMobileChromeVisible] = useState(false)
 
   // Centered title for loop/chat detail pages on mobile.
   const mobileDetailTitle = onLoopRoute
@@ -162,7 +165,7 @@ function Shell({ ws }: { ws: WorkspaceState }) {
   if (shareMode) {
     return (
       <div className="h-full w-full bg-white text-gray-900">
-        <Outlet />
+        <Outlet context={{ mobileChromeVisible }} />
       </div>
     )
   }
@@ -253,6 +256,17 @@ function Shell({ ws }: { ws: WorkspaceState }) {
         >
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
+        {/* Mobile chrome toggle: hides/shows header + sidebar rail */}
+        {isMobile && onDetailRoute && (
+          <button
+            type="button"
+            onClick={() => setMobileChromeVisible((v) => !v)}
+            className="flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            title={mobileChromeVisible ? "hide sidebar & toolbar" : "show sidebar & toolbar"}
+          >
+            {mobileChromeVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        )}
         <div className="relative">
           <button
             type="button"
@@ -385,11 +399,11 @@ function Shell({ ws }: { ws: WorkspaceState }) {
         {(() => {
           const ob = onboarding
           // No gate (or done / not logged in) → the normal app.
-          if (!(loggedIn && ob && ob.gated && !ob.done)) return <Outlet />
+          if (!(loggedIn && ob && ob.gated && !ob.done)) return <Outlet context={{ mobileChromeVisible }} />
           // Provider wants the user on an existing page → send them there and show
           // the real page; while there we poll so the gate advances when they're done.
           if (ob.show.kind === "route") {
-            return location.pathname === ob.show.path ? <Outlet /> : <Navigate to={ob.show.path} replace />
+            return location.pathname === ob.show.path ? <Outlet context={{ mobileChromeVisible }} /> : <Navigate to={ob.show.path} replace />
           }
           // Provider wants to show instructions → render them with a re-check button.
           if (ob.show.kind === "info") {
