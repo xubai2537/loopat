@@ -143,7 +143,9 @@ export default function AssistantMessage() {
     : null;
   const dotTopClass = firstVisiblePart?.type === "text" ? "top-[6px]" : "top-[17px]";
 
+  const partsCount = Array.isArray(messageParts) ? messageParts.length : 0;
   const children = (
+    <ErrorBoundary name="GroupedParts" resetKey={partsCount + ":" + isRunning} silent>
     <MessagePrimitive.GroupedParts
       groupBy={(part) => {
         try {
@@ -256,6 +258,7 @@ export default function AssistantMessage() {
         }
       }}
     </MessagePrimitive.GroupedParts>
+    </ErrorBoundary>
   );
 
   return (
