@@ -24,6 +24,7 @@ import { homedir } from "node:os"
 import { join, resolve as resolvePath } from "node:path"
 import { promisify } from "node:util"
 import { TEMPLATES_DIR, loopClaudeDir } from "./paths"
+import { withSpan } from "./tracer"
 
 const execFileP = promisify(execFile)
 
@@ -211,6 +212,8 @@ const ensureCache = new Map<string, EnsureCacheEntry>()
  * wholesale ~/.claude/plugins/ bind in bwrap.ts).
  */
 export async function ensureLoopPluginsInstalled(loopId: string): Promise<void> {
+  return withSpan("ensureLoopPluginsInstalled", async (span) => {
+  span.setAttribute("loop.id", loopId.slice(0, 8))
   const settingsPath = join(loopClaudeDir(loopId), "settings.json")
   const mtime = existsSync(settingsPath) ? statSync(settingsPath).mtimeMs : 0
 
@@ -248,6 +251,7 @@ export async function ensureLoopPluginsInstalled(loopId: string): Promise<void> 
   await ensurePluginsInstalled(enabled, ip, lockedVersions)
 
   ensureCache.set(loopId, { mtime })
+  }) // end withSpan
 }
 
 /**

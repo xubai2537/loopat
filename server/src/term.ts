@@ -6,6 +6,7 @@ import { ensureContainer, buildPodmanExecArgs, markActive, markInactive, V_LOOP_
 import { updateLoopStatus, setLoopPhase } from "./loop-status"
 import { effectiveDriver, getLoop, loopEphemeralPorts } from "./loops"
 import { loadPersonalConfig } from "./config"
+import { withSpan } from "./tracer"
 
 type Term = {
   proc: IPty
@@ -31,7 +32,8 @@ async function getOrSpawn(loopId: string, initCols = 80, initRows = 24): Promise
   if (inflight) return inflight
 
   const tag = loopId.slice(0, 8)
-  const p = (async () => {
+  const p = withSpan("getOrSpawnTerm", async (span) => {
+    span.setAttribute("loop.id", tag)
     const meta = await getLoop(loopId)
     if (!meta) throw new Error(`loop ${loopId} not found`)
     const driver = effectiveDriver(meta)
@@ -136,7 +138,7 @@ async function getOrSpawn(loopId: string, initCols = 80, initRows = 24): Promise
     })
 
     return t
-  })()
+  })
 
   pending.set(loopId, p)
   try {

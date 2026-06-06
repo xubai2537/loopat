@@ -2,7 +2,7 @@
 
 ## Tracing (OTel)
 
-Server 内置了 OpenTelemetry tracing，用于定位 loop 创建和启动的性能瓶颈。默认关闭，零开销。
+Server 内置了 OpenTelemetry tracing，覆盖 HTTP 请求、loop 创建、容器管理等关键路径。默认关闭，零开销。
 
 ### 快速验证
 
@@ -31,12 +31,14 @@ OTEL_TRACES_EXPORTER=otlp bun run dev:server
 
 ### 已埋点的 span
 
+**HTTP 层**（index.ts）— 所有 `/api/*` 请求自动生成 `HTTP {method} {path}` span，记录 status code。
+
 **`createLoop`**（loops.ts）— loop 创建全流程：
 
 | span | 做什么 | 常见瓶颈 |
 |------|--------|----------|
-| `composeClaudeConfig` | 合并 skills/agents/profiles 到 `.claude/` | 很少慢 |
-| `ensureUserContext` | 拉用户的 knowledge/notes repo | 首次 clone 慢 |
+| `composeFromPlan` | 合并 skills/agents/profiles 到 `.claude/` | 很少慢 |
+| `_ensureUserContext` | 拉用户的 knowledge/notes repo | 首次 clone 慢 |
 | `ensureRepoMirror` | bare mirror clone + git worktree add | 大 repo 首次 clone |
 | `ensureContextMounts` | 挂载 context 目录到 loop | 很少慢 |
 
@@ -45,9 +47,32 @@ OTEL_TRACES_EXPORTER=otlp bun run dev:server
 | span | 做什么 | 常见瓶颈 |
 |------|--------|----------|
 | `resolveProvider` | 找到有效的 API key + provider 配置 | 很少慢 |
-| `ensurePlugins` | 安装 marketplace 插件 | 插件多时偏慢 |
+| `ensureLoopPluginsInstalled` | 安装 marketplace 插件 | 插件多时偏慢 |
 | `ensureContainer` | 拉起 podman 容器 | 首次 build 镜像时最慢 |
+
+**容器层**（podman.ts）：
+
+| span | 做什么 | 常见瓶颈 |
+|------|--------|----------|
+| `ensureSandboxImage` | 构建/拉取基础沙箱镜像 | 首次 build |
+| `ensureLoopImage` | 基于 mise.toml 构建 per-loop 镜像 | toolchain 安装 |
+| `ensureContainer` | 创建/启动 podman 容器 | 首次创建 |
+
+span 属性 `sandbox.image.source` / `loop.image.source` / `container.action` 标识路径（cached/pulled/built/noop）。
+
+**终端**（term.ts）：`getOrSpawnTerm` 追踪首次 attach 的容器创建。
+
+**插件**（plugin-installer.ts）：`ensureLoopPluginsInstalled` 追踪 marketplace 注册 + 插件安装。
+
+**Compose**（compose.ts）：`composeFromPlan` 追踪配置合并。
 
 ### 关闭
 
 不设 `OTEL_TRACES_EXPORTER`，或设为 `none`。不会加载任何 exporter，noop tracer 的开销可忽略。
+
+### 实现细节
+
+- `console` 模式用 `SimpleSpanProcessor`（同步 flush），方便调试
+- `otlp` 模式用 `BatchSpanProcessor`（异步批量发送），适合生产
+- 进程退出时 `shutdownTracing()` 确保 pending span 被 flush
+- `withSpan()` helper 自动 `recordException` + `setStatus(ERROR)` + `span.end()`

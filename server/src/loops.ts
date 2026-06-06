@@ -49,7 +49,7 @@ import { composeLoopClaudeConfig, writeLoopSettings } from "./compose"
 import { getProvider, type OnboardingView } from "./git-host"
 import { loadExtensionProviders, resolveProviderId, resolveProvider } from "./providers" // also registers built-in providers
 import { loadVaultEnvs } from "./vaults"
-import { tracer, withSpan } from "./tracer"
+import { withSpan } from "./tracer"
 
 const execFileP = promisify(execFile)
 
@@ -375,6 +375,8 @@ export function ensureUserContext(user: string, vault: string = "default"): Prom
   return runExclusive(`ctx:${user}:${vault}`, () => _ensureUserContext(user, vault))
 }
 async function _ensureUserContext(user: string, vault: string): Promise<string[]> {
+  return withSpan("_ensureUserContext", async (span) => {
+  span.setAttribute("user", user)
   const errors: string[] = []
   const cfg = await loadPersonalConfig(user, vault)
   const sshEnv = { ...process.env, GIT_SSH_COMMAND: sshCommandForUser(user, vault) }
@@ -421,7 +423,9 @@ async function _ensureUserContext(user: string, vault: string): Promise<string[]
   const kcfg = hasKnowledge ? await loadKnowledgeConfig(user) : { notes: undefined }
   await ensurePerUserRepo(personalNotesDir(user), kcfg.notes?.git, "notes")
   await writeReposManifest(personalReposDir(user), cfg.repos ?? [])
+  if (errors.length) span.setAttribute("context.errors", errors.length)
   return errors
+  }) // end withSpan
 }
 
 /**
@@ -449,7 +453,8 @@ async function writeReposManifest(reposDir: string, specs: RepoSpec[]) {
  * repo dir exists afterwards. Used by loop creation and any on-demand path.
  */
 async function ensureRepoMirror(user: string, name: string, sshCommand?: string): Promise<string | null> {
-  // The roster lives in the user's OWN personal config (per-user, no fallback).
+  return withSpan("ensureRepoMirror", async (span) => {
+  span.setAttribute("repo.name", name)
   const pcfg = await loadPersonalConfig(user)
   const spec = pcfg.repos?.find((r) => r.name === name)
   if (!spec?.git) return null
@@ -471,6 +476,7 @@ async function ensureRepoMirror(user: string, name: string, sshCommand?: string)
   // Already mirrored → re-assert the standard refspec, then fetch (incremental,
   // fast). HEAD presence == bare repo.
   if (existsSyncBase(join(dir, "HEAD"))) {
+    span.setAttribute("repo.mirror.action", "fetch")
     await assertStandardRefspec()
     await execFileP("git", ["-C", dir, "fetch", "--quiet", "origin"], { env, timeout: 60_000 }).catch(() => {})
     return dir
@@ -498,12 +504,14 @@ async function ensureRepoMirror(user: string, name: string, sshCommand?: string)
     // Materialize refs/remotes/origin/<def> now (the clone only wrote
     // refs/heads/<def>), so the very first worktree already tracks origin.
     await execFileP("git", ["-C", dir, "fetch", "--quiet", "origin"], { env, timeout: 60_000 }).catch(() => {})
+    span.setAttribute("repo.mirror.action", "cloned")
     console.log(`[loopat] mirrored ${spec.git} → ${dir}`)
     return dir
   } catch (e: any) {
     console.warn(`[loopat] repo mirror failed (${spec.git}): ${e?.stderr ?? e?.message ?? e}`)
     return null
   }
+  }) // end withSpan
 }
 
 export async function ensureWorkspaceDirs() {
@@ -2189,6 +2197,7 @@ async function ensurePerUserContextWorktree(repo: string, path: string, branch: 
 }
 
 export async function ensureContextMounts(id: string, createdBy: string) {
+  return withSpan("ensureContextMounts", async () => {
   await mkdir(loopContextDir(id), { recursive: true })
   // knowledge / notes are per-user (cloned by ensureUserContext from the user's
   // personal-declared remotes). Each worktree opens from origin/main — a fresh
@@ -2202,6 +2211,7 @@ export async function ensureContextMounts(id: string, createdBy: string) {
   await ensureContextWorktree(personalDir(createdBy), loopContextPersonal(id), `loop/${id}`)
   await mkdir(personalReposDir(createdBy), { recursive: true })
   await ensureSymlink(loopContextRepos(id), personalReposDir(createdBy))
+  }) // end withSpan
 }
 
 export async function listLoops(): Promise<LoopMeta[]> {
@@ -2272,50 +2282,42 @@ export async function createLoop(opts: {
     await mkdir(loopDir(id), { recursive: true })
     await mkdir(loopClaudeDir(id), { recursive: true })
 
-    await withSpan("composeClaudeConfig", async () => {
-      await composeLoopClaudeConfig(id, opts.createdBy, opts.profiles)
-      await writeLoopSettings(id)
-    })
+    await composeLoopClaudeConfig(id, opts.createdBy, opts.profiles)
+    await writeLoopSettings(id)
 
     // Pull the per-user knowledge/notes FIRST: clones the user's knowledge repo
     // and reads its .loopat/config.json for the notes remote + repo roster.
-    const ctxWarnings = await withSpan("ensureUserContext", async () => {
-      return await ensureUserContext(opts.createdBy, opts.vault ?? "default").catch(
-        (e: any) => { console.warn(`[loopat] ensureUserContext(${opts.createdBy}): ${e?.message ?? e}`); return [`context init failed: ${e?.message ?? e}`] },
-      )
-    })
+    const ctxWarnings = await ensureUserContext(opts.createdBy, opts.vault ?? "default").catch(
+      (e: any) => { console.warn(`[loopat] ensureUserContext(${opts.createdBy}): ${e?.message ?? e}`); return [`context init failed: ${e?.message ?? e}`] },
+    )
     if (ctxWarnings.length) meta.contextWarnings = ctxWarnings
 
     if (opts.repo) {
-      await withSpan("ensureRepoMirror", async () => {
-        const userSsh = sshCommandForUser(opts.createdBy, opts.vault ?? "default")
-        const repoPath = await ensureRepoMirror(opts.createdBy, opts.repo!, userSsh)
-        if (!repoPath) {
-          throw new Error(`repo "${opts.repo}" not found / clone failed`)
-        }
-        const branch = `loop/${(await shortBranchSlug(meta.title))}-${id.slice(0, 6)}`
-        try {
-          // Open the loop branch off origin/<default> so the worktree has
-          // a real tracking ref and git rebase / status work normally.
-          const start = await remoteStartPoint(repoPath, userSsh)
-          const addArgs = start
-            ? ["-C", repoPath, "worktree", "add", "-b", branch, loopWorkdir(id), start]
-            : ["-C", repoPath, "worktree", "add", "-b", branch, loopWorkdir(id)]
-          await execFileP("git", addArgs)
-          meta.repo = opts.repo
-          meta.branch = branch
-        } catch (e: any) {
-          console.warn(`[loopat] git worktree add failed for repo=${opts.repo}: ${e?.stderr ?? e?.message}`)
-          await mkdir(loopWorkdir(id), { recursive: true })
-        }
-      })
+      const userSsh = sshCommandForUser(opts.createdBy, opts.vault ?? "default")
+      const repoPath = await ensureRepoMirror(opts.createdBy, opts.repo!, userSsh)
+      if (!repoPath) {
+        throw new Error(`repo "${opts.repo}" not found / clone failed`)
+      }
+      const branch = `loop/${(await shortBranchSlug(meta.title))}-${id.slice(0, 6)}`
+      try {
+        // Open the loop branch off origin/<default> so the worktree has
+        // a real tracking ref and git rebase / status work normally.
+        const start = await remoteStartPoint(repoPath, userSsh)
+        const addArgs = start
+          ? ["-C", repoPath, "worktree", "add", "-b", branch, loopWorkdir(id), start]
+          : ["-C", repoPath, "worktree", "add", "-b", branch, loopWorkdir(id)]
+        await execFileP("git", addArgs)
+        meta.repo = opts.repo
+        meta.branch = branch
+      } catch (e: any) {
+        console.warn(`[loopat] git worktree add failed for repo=${opts.repo}: ${e?.stderr ?? e?.message}`)
+        await mkdir(loopWorkdir(id), { recursive: true })
+      }
     } else {
       await mkdir(loopWorkdir(id), { recursive: true })
     }
 
-    await withSpan("ensureContextMounts", async () => {
-      await ensureContextMounts(id, effectiveDriver(meta))
-    })
+    await ensureContextMounts(id, effectiveDriver(meta))
 
     await writeFile(loopMetaPath(id), JSON.stringify(meta, null, 2))
     return meta

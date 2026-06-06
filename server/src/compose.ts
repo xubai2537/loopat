@@ -32,6 +32,7 @@ import {
   personalSkillsDir,
 } from "./paths"
 import { resolveLoopPlan, type LoopPlan } from "./profiles"
+import { withSpan } from "./tracer"
 
 /** Read JSON, return null if missing/malformed. */
 async function readJson<T = unknown>(path: string): Promise<T | null> {
@@ -309,6 +310,8 @@ export async function composeLoopClaudeConfig(
 }
 
 export async function composeFromPlan(loopId: string, plan: LoopPlan): Promise<ComposeResult> {
+  return withSpan("composeFromPlan", async (span) => {
+  span.setAttribute("loop.id", loopId.slice(0, 8))
   const dst = loopClaudeDir(loopId)
   await mkdir(dst, { recursive: true })
 
@@ -462,6 +465,7 @@ export async function composeFromPlan(loopId: string, plan: LoopPlan): Promise<C
     miseLockPath,
     installedPluginsPath,
   }
+  }) // end withSpan
 }
 
 /**

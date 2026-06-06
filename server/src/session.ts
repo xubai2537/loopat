@@ -14,7 +14,7 @@ import { effectiveDriver, getLoop, loopEphemeralPorts, patchLoopMeta } from "./l
 import { spawn as nodeSpawn } from "node:child_process"
 import { ensureContainer, buildPodmanExecArgs, markActive, markInactive, V_LOOP_WORKDIR, V_LOOP_CLAUDE } from "./podman"
 import { updateLoopStatus, setLoopPhase } from "./loop-status"
-import { tracer, withSpan } from "./tracer"
+import { withSpan } from "./tracer"
 
 // Tests override LOOPAT_CLAUDE_BIN to point at a mock binary (a script that
 // reads stream-json from stdin and writes canned messages back) so we can
@@ -401,7 +401,7 @@ class LoopSession {
       await composeLoopClaudeConfig(loopId, driver, meta.config?.profiles)
     }
 
-    await withSpan("ensurePlugins", () => ensureLoopPluginsInstalled(loopId))
+    await ensureLoopPluginsInstalled(loopId)
 
     // Nuke CC's MCP-related cache files that linger across spawns.
     // Tokens flow through vault envs now; stale cache would shortcircuit that.
@@ -464,22 +464,20 @@ class LoopSession {
     // Ensure the per-loop podman container exists and is running. Idempotent:
     // if the container is already up with the same config-hash, no-op.
     let building = false
-    await withSpan("ensureContainer", async () => {
-      await ensureContainer({
-        loopId,
-        createdBy: driver,
-        vaultName: meta.config?.vault,
-        knowledgeRw: meta.config?.knowledge_rw,
-        mountAllLoops: meta.config?.mount_all_loops,
-        repo: meta.repo,
-        extraEnv,
-        ephemeralPorts: loopEphemeralPorts(meta),
-      }, {
-        onProgress: (msg) => {
-          if (!building) { building = true; setLoopPhase(loopId, "preparing") }
-          updateLoopStatus(loopId, msg)
-        },
-      })
+    await ensureContainer({
+      loopId,
+      createdBy: driver,
+      vaultName: meta.config?.vault,
+      knowledgeRw: meta.config?.knowledge_rw,
+      mountAllLoops: meta.config?.mount_all_loops,
+      repo: meta.repo,
+      extraEnv,
+      ephemeralPorts: loopEphemeralPorts(meta),
+    }, {
+      onProgress: (msg) => {
+        if (!building) { building = true; setLoopPhase(loopId, "preparing") }
+        updateLoopStatus(loopId, msg)
+      },
     })
     if (building) setLoopPhase(loopId, "ready")
     updateLoopStatus(loopId, "Ready")

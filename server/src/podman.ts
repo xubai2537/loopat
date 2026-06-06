@@ -64,6 +64,7 @@ import { DEFAULT_VAULT, listVaultHomeMounts } from "./vaults"
 import { hostExecDir, writeHostShims } from "./host-exec"
 import { resolveSandboxClaudeBinary } from "./claude-binary"
 import { parse as tomlParse, stringify as tomlStringify } from "smol-toml"
+import { withSpan } from "./tracer"
 
 const execFileP = promisify(execFile)
 
@@ -606,7 +607,7 @@ export async function baseContainerfileHash(): Promise<string> {
 let _imageBuildInFlight: Promise<void> | null = null
 export async function ensureSandboxImage(opts?: { onProgress?: (msg: string) => void }): Promise<void> {
   if (_imageBuildInFlight) return _imageBuildInFlight
-  _imageBuildInFlight = (async () => {
+  _imageBuildInFlight = withSpan("ensureSandboxImage", async (span) => {
     const containerfile = join(LOOPAT_INSTALL_DIR, "server", "templates", "sandbox", "Containerfile")
     if (!existsSync(containerfile)) {
       throw new Error(`Cannot build sandbox image: Containerfile not found at ${containerfile}`)
@@ -621,6 +622,7 @@ export async function ensureSandboxImage(opts?: { onProgress?: (msg: string) => 
       // Re-tag so the unversioned SANDBOX_IMAGE name always points at the
       // latest built version.
       await runPodman(["tag", hashTag, SANDBOX_IMAGE], { allowFail: true })
+      span.setAttribute("sandbox.image.source", "cached")
       return
     }
 
@@ -637,6 +639,7 @@ export async function ensureSandboxImage(opts?: { onProgress?: (msg: string) => 
     if (pulled.code === 0) {
       await runPodman(["tag", remoteRef, hashTag], { allowFail: true })
       await runPodman(["tag", remoteRef, SANDBOX_IMAGE], { allowFail: true })
+      span.setAttribute("sandbox.image.source", "pulled")
       console.log(`[podman] sandbox image ready (pulled ${remoteRef})`)
       return
     }
@@ -661,8 +664,9 @@ export async function ensureSandboxImage(opts?: { onProgress?: (msg: string) => 
     if (r.code !== 0) {
       throw new Error(`sandbox image build failed: ${r.stderr || r.stdout}`)
     }
+    span.setAttribute("sandbox.image.source", "built")
     console.log(`[podman] sandbox image ready`)
-  })()
+  })
   try {
     await _imageBuildInFlight
   } finally {
@@ -741,9 +745,11 @@ export async function ensureLoopImage(loopId: string, opts?: { onProgress?: (msg
   const existing = _loopImageInFlight.get(tag)
   if (existing) return existing
 
-  const built = (async () => {
+  const built = withSpan("ensureLoopImage", async (span) => {
+    span.setAttribute("loop.id", loopId.slice(0, 8))
     const present = await runPodman(["image", "exists", tag], { allowFail: true })
     if (present.code === 0) {
+      span.setAttribute("loop.image.source", "cached")
       _loopWarnings.delete(loopId)
       return tag
     }
@@ -813,13 +819,14 @@ export async function ensureLoopImage(loopId: string, opts?: { onProgress?: (msg
         _loopWarnings.set(loopId, msg)
         return SANDBOX_IMAGE
       }
+      span.setAttribute("loop.image.source", "built")
       console.log(`[podman] loop image ${tag} ready`)
       _loopWarnings.delete(loopId)
     } finally {
       await rm(buildDir, { recursive: true, force: true }).catch(() => {})
     }
     return tag
-  })()
+  })
   _loopImageInFlight.set(tag, built)
   try {
     return await built
@@ -1199,6 +1206,8 @@ export async function ensureSandboxSshPerms(user: string, vault: string): Promis
  *   - running, hash drift   → stop + rm + create + start
  */
 export async function ensureContainer(opts: ContainerOptions, progress?: { onProgress?: (msg: string) => void }): Promise<void> {
+  return withSpan("ensureContainer", async (span) => {
+  span.setAttribute("loop.id", opts.loopId.slice(0, 8))
   await ensureLoopatNetwork()
   // Deterministically fix the vault ssh-key perms BEFORE the container that
   // bind-mounts them starts, so the first in-sandbox ssh authenticates reliably
@@ -1233,7 +1242,10 @@ export async function ensureContainer(opts: ContainerOptions, progress?: { onPro
   const curImageId = (await runPodman(["image", "inspect", "--format", "{{.Id}}", image])).stdout.trim()
 
   const cur = await inspectContainer(opts.loopId)
-  if (cur.running && cur.configHash === desiredHash && cur.imageId === curImageId) return
+  if (cur.running && cur.configHash === desiredHash && cur.imageId === curImageId) {
+    span.setAttribute("container.action", "noop")
+    return
+  }
   const tag = opts.loopId.slice(0, 8)
   if (cur.exists) {
     if (cur.configHash !== desiredHash || cur.imageId !== curImageId) {
@@ -1257,6 +1269,7 @@ export async function ensureContainer(opts: ContainerOptions, progress?: { onPro
   await runPodman(["create", ...createArgs])
   progress?.onProgress?.("Starting sandbox container…")
   await runPodman(["start", containerName(opts.loopId)])
+  }) // end withSpan("ensureContainer")
 }
 
 export async function stopContainer(loopId: string): Promise<void> {

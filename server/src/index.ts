@@ -1,4 +1,4 @@
-import "./tracer"
+import { traceMiddleware, shutdownTracing } from "./tracer"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { createBunWebSocket } from "hono/bun"
@@ -108,6 +108,7 @@ type Variables = { userId: string }
 export const app = new Hono<{ Variables: Variables }>()
 
 app.use("/api/*", cors({ origin: (o) => o ?? "*", credentials: true }))
+app.use("/api/*", traceMiddleware())
 
 // public routes
 app.get("/api/health", (c) => c.json({ ok: true, loopatHome: LOOPAT_HOME, workspace: WORKSPACE }))
@@ -3503,7 +3504,10 @@ if (podmanProbe.ok) {
 // isn't left with orphaned sandbox processes after the server dies.
 const stopAllOnExit = async () => {
   try {
-    await stopAllWorkspaceContainers()
+    await Promise.all([
+      stopAllWorkspaceContainers(),
+      shutdownTracing(),
+    ])
   } catch (e: any) {
     console.warn(`[loopat] stop-all on exit failed: ${e?.message ?? e}`)
   }
