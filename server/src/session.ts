@@ -14,7 +14,8 @@ import { effectiveDriver, getLoop, loopEphemeralPorts, patchLoopMeta } from "./l
 import { spawn as nodeSpawn } from "node:child_process"
 import { ensureContainer, buildPodmanExecArgs, markActive, markInactive, V_LOOP_WORKDIR, V_LOOP_CLAUDE } from "./podman"
 import { updateLoopStatus, setLoopPhase } from "./loop-status"
-import { withSpan } from "./tracer"
+import { tracer, withSpan } from "./tracer"
+import { SpanStatusCode, type Span } from "@opentelemetry/api"
 
 // Tests override LOOPAT_CLAUDE_BIN to point at a mock binary (a script that
 // reads stream-json from stdin and writes canned messages back) so we can
@@ -239,6 +240,8 @@ class LoopSession {
   private generating = false
   private messageQueue: QueuedMessage[] = []
   private queueProcessing = false
+  private turnSpan: Span | null = null
+  private ttfbSpan: Span | null = null
 
   constructor(id: string) {
     this.id = id
@@ -762,7 +765,12 @@ class LoopSession {
           const event = (msg as any).event?.type ? ` event=${(msg as any).event.type}` : ""
           console.error(`[sdk:${tag}] msg ${msg.type}${subtype}${event}`)
         }
-        // Track generating state: init → true, result → false
+        // Track generating state: init → true, result → false.
+        // End TTFB span on first assistant content.
+        if (msg.type === "assistant" && this.ttfbSpan) {
+          this.ttfbSpan.end()
+          this.ttfbSpan = null
+        }
         if (msg.type === "system" && (msg as any).subtype === "init") {
           this.generating = true
         } else if (msg.type === "result") {
@@ -771,6 +779,8 @@ class LoopSession {
           this.q = null
           this.processNextInQueue()
           resultReceived = true
+          this.turnSpan?.end()
+          this.turnSpan = null
         } else if (
           // Inject queued messages at tool-result boundaries — matching
           // real Claude Code's per-step queue consumption.
@@ -813,6 +823,12 @@ class LoopSession {
         this.history.push(err as any)
         this.persist(err)
         this.broadcast(err)
+        if (this.turnSpan) {
+          this.turnSpan.recordException(e as Error)
+          this.turnSpan.setStatus({ code: SpanStatusCode.ERROR, message: msg })
+          this.turnSpan.end()
+          this.turnSpan = null
+        }
       }
     } finally {
       // If a new Query was started by processNextInQueue() above, skip cleanup —
@@ -829,6 +845,9 @@ class LoopSession {
       this.history.push(result as any)
       this.broadcast(result)
       if (this.subscribers.size === 0) this.scheduleIdleCleanup()
+      // Clean up any dangling trace spans
+      if (this.ttfbSpan) { this.ttfbSpan.end(); this.ttfbSpan = null }
+      if (this.turnSpan) { this.turnSpan.end(); this.turnSpan = null }
     }
   }
 
@@ -1023,6 +1042,8 @@ class LoopSession {
   }
 
   async attach(ws: WSContext) {
+    return withSpan("session.attach", async (span) => {
+    span.setAttribute("loop.id", this.id.slice(0, 8))
     await this.historyLoaded
     const state: SubscriberState = { pending: [] }
     this.subscribers.set(ws, state)
@@ -1140,7 +1161,10 @@ class LoopSession {
     }
     this.cancelIdleCleanup()
     this.broadcastViewers()
+    span.setAttribute("session.viewers", this.subscribers.size)
+    span.setAttribute("session.history_size", this.history.length)
     console.log(`[loop:${this.id.slice(0, 8)}] attach → viewers=${this.subscribers.size}`)
+    }) // end withSpan("session.attach")
   }
 
   detach(ws: WSContext) {
@@ -1164,10 +1188,16 @@ class LoopSession {
       this.broadcast({ type: "queue_update", queue: this.messageQueue.map(m => m.text) })
       return
     }
-    // _pushUserMessage can throw BEFORE the query starts (e.g. ensureStarted's
-    // "no provider with a valid apiKey" when the user hasn't set an AI key) —
-    // in which case `consume` never runs and never broadcasts. Catch it here so
-    // the frontend gets a visible error instead of hanging on "Reasoning…".
+    // Start a turn-level span that covers ensureStarted + SDK handoff.
+    // The TTFB child span (started here, ended in consume on first assistant msg)
+    // measures how long until the user sees the first AI output.
+    const turnSpan = tracer.startSpan("session.turn", {
+      attributes: { "loop.id": this.id.slice(0, 8), "turn.input_len": text.length },
+    })
+    this.turnSpan = turnSpan
+    this.ttfbSpan = tracer.startSpan("session.ttfb", {
+      attributes: { "loop.id": this.id.slice(0, 8) },
+    })
     try {
       await this._pushUserMessage(text, permissionMode)
     } catch (e: any) {
@@ -1175,6 +1205,12 @@ class LoopSession {
       const message = e?.message ?? String(e)
       console.error(`[loopat] sendUserText failed for ${this.id}: ${message}`)
       this.broadcast({ type: "error", message })
+      turnSpan.recordException(e as Error)
+      turnSpan.setStatus({ code: SpanStatusCode.ERROR, message })
+      turnSpan.end()
+      this.turnSpan = null
+      this.ttfbSpan?.end()
+      this.ttfbSpan = null
     }
   }
 

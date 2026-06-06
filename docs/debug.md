@@ -42,7 +42,20 @@ OTEL_TRACES_EXPORTER=otlp bun run dev:server
 | `ensureRepoMirror` | bare mirror clone + git worktree add | 大 repo 首次 clone |
 | `ensureContextMounts` | 挂载 context 目录到 loop | 很少慢 |
 
-**`ensureStarted`**（session.ts）— SDK session 启动：
+**`session.attach`**（session.ts）— 用户打开 loop 页面，WS 连接后的初始化：
+
+| span | 做什么 | 常见瓶颈 |
+|------|--------|----------|
+| `session.attach` | provider 解析 + history replay + 权限恢复 | history 大时 |
+
+**`session.turn`**（session.ts）— 用户发送一条消息到 AI 返回 result 的完整生命周期：
+
+| span | 做什么 | 常见瓶颈 |
+|------|--------|----------|
+| `session.turn` | 覆盖 ensureStarted → SDK 处理 → result，记录 `turn.input_len` | 全链路 |
+| `session.ttfb` | 从用户发消息到第一条 assistant 消息到达 | AI 首 token 延迟 |
+
+**`ensureStarted`**（session.ts）— SDK session 启动（`session.turn` 的子 span）：
 
 | span | 做什么 | 常见瓶颈 |
 |------|--------|----------|
