@@ -28,6 +28,7 @@ import { useChatWebSocket, type ChatWsEvent } from "../useChatWebSocket"
 
 const LS_OPEN = "loopat:floating-dm-open"
 const LS_CONV = "loopat:floating-dm-conv"
+const LS_POS = "loopat:floating-dm-pos"
 
 function formatTime(ts: number): string {
   const d = new Date(ts)
@@ -53,6 +54,59 @@ export function FloatingDm({ me }: { me: string }) {
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+
+  // ── drag + position ──
+  const [pos, setPos] = useState<{ bottom: number; right: number }>(() => {
+    try {
+      const saved = localStorage.getItem(LS_POS)
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return { bottom: isMobile ? 96 : 80, right: 20 }
+  })
+  const posRef = useRef(pos)
+  posRef.current = pos
+  const [dragging, setDragging] = useState(false)
+  const dragRef = useRef<{
+    startX: number; startY: number
+    startBottom: number; startRight: number
+    moved: boolean
+  } | null>(null)
+
+  const onBubblePointerDown = useCallback((e: React.PointerEvent) => {
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    dragRef.current = {
+      startX: e.clientX, startY: e.clientY,
+      startBottom: posRef.current.bottom, startRight: posRef.current.right,
+      moved: false,
+    }
+  }, [])
+
+  const onBubblePointerMove = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+    if (!d.moved) {
+      if (dx * dx + dy * dy < 25) return
+      d.moved = true
+      setDragging(true)
+    }
+    setPos({
+      bottom: Math.max(8, Math.min(window.innerHeight - 56, d.startBottom - dy)),
+      right: Math.max(8, Math.min(window.innerWidth - 56, d.startRight - dx)),
+    })
+  }, [])
+
+  const onBubblePointerUp = useCallback(() => {
+    const d = dragRef.current
+    dragRef.current = null
+    setDragging(false)
+    if (!d?.moved) {
+      setOpen(true)
+      return
+    }
+    try { localStorage.setItem(LS_POS, JSON.stringify(posRef.current)) } catch {}
+  }, [])
 
   const dms = useMemo(
     () =>
@@ -207,12 +261,17 @@ export function FloatingDm({ me }: { me: string }) {
       {!open && (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onPointerDown={onBubblePointerDown}
+          onPointerMove={onBubblePointerMove}
+          onPointerUp={onBubblePointerUp}
+          style={{ bottom: pos.bottom, right: pos.right }}
           className={
-            `fixed ${isMobile ? "bottom-24" : "bottom-20"} right-5 z-30 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors ` +
-            (totalUnread > 0
-              ? "bg-gray-700 text-white animate-pulse"
-              : "bg-gray-700 text-white hover:bg-gray-500")
+            "fixed z-30 w-12 h-12 rounded-full flex items-center justify-center shadow-lg select-none touch-none transition-opacity duration-200 " +
+            (dragging
+              ? "cursor-grabbing bg-gray-700 text-white opacity-100"
+              : totalUnread > 0
+                ? "cursor-grab bg-gray-700 text-white opacity-100 animate-pulse"
+                : "cursor-grab bg-gray-700 text-white opacity-40 hover:opacity-100")
           }
           title="direct messages"
         >
@@ -226,7 +285,7 @@ export function FloatingDm({ me }: { me: string }) {
       )}
 
       {open && (
-        <div className={`fixed ${isMobile ? "bottom-24" : "bottom-20"} right-5 z-30 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[32rem] max-h-[calc(100dvh-2.5rem)] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden`}>
+        <div style={{ bottom: pos.bottom, right: pos.right }} className="fixed z-30 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[32rem] max-h-[calc(100dvh-2.5rem)] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
           <header className="h-10 shrink-0 border-b border-gray-200 px-2 flex items-center gap-1">
             {active ? (
               <button
