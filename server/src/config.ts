@@ -89,12 +89,10 @@ export type ProviderConfig = {
    *  referenced env doesn't exist (provider effectively disabled). */
   apiKey: string
   /**
-   * Override cli's context-window detection for this model. cli has a
-   * hardcoded list (DP / XV8 / coral_reef_sonnet predicates) of claude
-   * models that get 1M; everything else falls back to DR1=200000. For
-   * gateway-routed / non-claude models with larger windows, set this so
-   * auto-compact (92% × window) fires at the right point. Activated via
-   * env vars DISABLE_COMPACT=1 + CLAUDE_CODE_MAX_CONTEXT_TOKENS=<value>.
+   * Context window size for this model (in tokens). Used to set the
+   * auto-compact trigger via CLAUDE_CODE_AUTO_COMPACT_WINDOW so CC
+   * compacts before hitting the limit. Safe to set for any model —
+   * for known Claude models CC auto-detects but the override is harmless.
    */
   maxContextTokens?: number
   enabled: boolean

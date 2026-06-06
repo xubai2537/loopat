@@ -457,13 +457,11 @@ class LoopSession {
       ANTHROPIC_BASE_URL: provider.baseUrl,
       CLAUDE_CONFIG_DIR: V_LOOP_CLAUDE(loopId),
     }
-    // Override cli's hardcoded model→context-window map for gateway-routed
-    // models. Both env vars are required (cli checks DISABLE_COMPACT first
-    // to enable the override path, then reads CLAUDE_CODE_MAX_CONTEXT_TOKENS).
-    // Per-model override takes precedence over provider-level.
-    //
-    // Resolve the active model: loop meta override first, then personal
-    // config default model, then first enabled, then models[0].
+    // Tell CC when to auto-compact for gateway-routed / non-claude models
+    // whose context window CC can't auto-detect. CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    // sets the compact trigger threshold without disabling compaction itself.
+    // (DISABLE_COMPACT + CLAUDE_CODE_MAX_CONTEXT_TOKENS disables ALL compaction
+    // — auto AND manual — which causes "Prompt is too long" on long sessions.)
     let modelId: string | undefined = meta.config?.default_model_id
     if (!modelId) {
       const pCfg = await loadPersonalConfig(driver, meta.config?.vault)
@@ -477,8 +475,7 @@ class LoopSession {
       ?? provider.models[0]
     const contextTokenOverride = activeModel?.maxContextTokens ?? provider.maxContextTokens
     if (contextTokenOverride && contextTokenOverride > 0) {
-      extraEnv.DISABLE_COMPACT = "1"
-      extraEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(contextTokenOverride)
+      extraEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(contextTokenOverride)
     }
     // Mise toolchain: baked into the per-loop image at ensureLoopImage
     // build time. The image's ENV puts /opt/loopat-mise/shims on PATH, so
