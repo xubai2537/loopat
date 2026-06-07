@@ -211,6 +211,14 @@ async function globalSetup() {
         apiKey: "${ANTHROPIC_API_KEY}",
         maxContextTokens: 1000000,
         enabled: true,
+        // Pin every built-in subagent to the one model this provider serves —
+        // mirrors a single-model gateway. The env passthrough turns these into
+        // ANTHROPIC_DEFAULT_*_MODEL + CLAUDE_CODE_SUBAGENT_MODEL; the
+        // subagent-model case proves Explore runs on opus-4-7, never the
+        // unconfigured default haiku tier.
+        sonnet_model: "claude-opus-4-7",
+        haiku_model: "claude-opus-4-7",
+        agent_model: "claude-opus-4-7",
       },
     },
     knowledge: { git: `ssh://git@${hostIp}:${sshdPort}/srv/git/knowledge.git` },
