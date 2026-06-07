@@ -1,14 +1,29 @@
-export const DEFAULT_PROVIDER_PRESETS: Array<{ name: string; baseUrl: string; models: string[] }> = [
+export const DEFAULT_PROVIDER_PRESETS: Array<{ name: string; baseUrl: string; models: Array<string | { id: string; tier?: "opus" | "sonnet" | "haiku"; maxContextTokens?: number }> }> = [
   { name: "Anthropic", baseUrl: "https://api.anthropic.com",
-    models: ["claude-sonnet-4-20250514", "claude-opus-4-7-20251101"] },
+    models: [
+      "claude-sonnet-4-20250514",
+      "claude-opus-4-7-20251101",
+      "claude-haiku-4-5-20251001",
+    ]},
   { name: "DeepSeek",  baseUrl: "https://api.deepseek.com/anthropic",
-    models: ["deepseek-v4-pro[1m]", "deepseek-v4-flash[1m]"] },
+    models: [
+      { id: "deepseek-v4-pro[1m]", tier: "opus", maxContextTokens: 1_000_000 },
+      { id: "deepseek-v4-flash[1m]", tier: "haiku", maxContextTokens: 1_000_000 },
+    ]},
   { name: "Kimi",      baseUrl: "https://api.moonshot.cn/anthropic",
-    models: ["kimi-k2.6"] },
+    models: [
+      { id: "kimi-k2.6", tier: "sonnet", maxContextTokens: 1_000_000 },
+    ]},
   { name: "MiniMax",   baseUrl: "https://api.minimaxi.com/anthropic",
-    models: ["MiniMax-M2.7"] },
+    models: [
+      { id: "MiniMax-M2.7", tier: "sonnet", maxContextTokens: 1_000_000 },
+    ]},
   { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1",
-    models: ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.5-flash"] },
+    models: [
+      { id: "anthropic/claude-sonnet-4", tier: "sonnet" },
+      { id: "openai/gpt-4o", tier: "opus", maxContextTokens: 128_000 },
+      { id: "google/gemini-2.5-flash", tier: "haiku", maxContextTokens: 1_000_000 },
+    ]},
 ]
 
 export const DEFAULT_MISE_TOOL_PRESETS: Array<{ name: string; suggestedVersion: string; description?: string; backend?: string }> = [
@@ -25,6 +40,3 @@ export const DEFAULT_MISE_TOOL_PRESETS: Array<{ name: string; suggestedVersion: 
   { name: "fd",         suggestedVersion: "10.2",    description: "Fast file finder", backend: "aqua:sharkdp/fd" },
   { name: "jq",         suggestedVersion: "1.7",     description: "Command-line JSON processor", backend: "aqua:jqlang/jq" },
 ]
-
-/** @deprecated — use DEFAULT_PROVIDER_PRESETS */
-export const PROVIDER_PRESETS = DEFAULT_PROVIDER_PRESETS

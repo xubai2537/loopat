@@ -2,7 +2,7 @@
  * Loop tab — AI chat with Claude Code-like experience.
  * Chat area uses assistant-ui runtime with custom claudecodeui-styled components.
  */
-import { useEffect, useState, useMemo, useRef, Fragment } from "react"
+import { useCallback, useEffect, useState, useMemo, useRef, Fragment } from "react"
 import { createPortal } from "react-dom"
 import { useParams, useNavigate, Navigate, useLocation, useOutletContext } from "react-router-dom"
 import { AssistantRuntimeProvider } from "@assistant-ui/react"
@@ -162,7 +162,10 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
     setEditorSelection(null)
     setOpenPanels((prev) => prev.includes("editor") ? prev : [...prev, "editor"])
   }
-  const { runtime, connected, reconnecting, running, viewers, extra, queue, onClearQueue } = useLoopRuntime(meta.id, ws.currentUser?.id ?? "", openFile)
+  const handleTitleChanged = useCallback((title: string) => {
+    ws.updateLoopInPlace(meta.id, { title })
+  }, [meta.id, ws.updateLoopInPlace])
+  const { runtime, connected, reconnecting, running, viewers, extra, queue, onClearQueue } = useLoopRuntime(meta.id, ws.currentUser?.id ?? "", openFile, handleTitleChanged)
 
   // Sandbox-prep gate: on first use, the per-loop image builds (mise toolchain
   // install / base-image pull). While it runs, terminal + chat aren't usable —

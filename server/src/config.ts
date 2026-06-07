@@ -38,18 +38,42 @@ export type WorkspaceClaudeJson = {
   enabledPlugins?: Record<string, boolean>
 }
 
+export type ModelTier = "opus" | "sonnet" | "haiku"
+
+/** Infer tier from an Anthropic model ID. Returns undefined for non-Anthropic models. */
+export function inferTier(modelId: string): ModelTier | undefined {
+  if (/^claude-opus-/i.test(modelId)) return "opus"
+  if (/^claude-sonnet-/i.test(modelId)) return "sonnet"
+  if (/^claude-haiku-/i.test(modelId)) return "haiku"
+  return undefined
+}
+
+/** Resolve tier for a model: explicit tier wins, then infer from ID. */
+export function resolveTier(model: ModelEntry): ModelTier | undefined {
+  return model.tier ?? inferTier(model.id)
+}
+
 /** A model entry within a provider's model list. */
 export type ModelEntry = {
   id: string
-  enabled?: boolean
   /** Per-model context-window override (takes precedence over provider-level). */
   maxContextTokens?: number
+  tier?: ModelTier
+}
+
+/** On-disk models can be a plain string or a structured object. */
+export type ModelEntryDisk = string | { id: string; maxContextTokens?: number; tier?: ModelTier }
+
+/** Normalize a disk model entry to the canonical ModelEntry shape. */
+export function normalizeModelEntry(m: ModelEntryDisk): ModelEntry {
+  if (typeof m === "string") return { id: m }
+  return { id: m.id, ...(m.maxContextTokens ? { maxContextTokens: m.maxContextTokens } : {}), ...(m.tier ? { tier: m.tier } : {}) }
 }
 
 export type ProviderPreset = {
   name: string
   baseUrl: string
-  models: string[]
+  models: ModelEntryDisk[]
 }
 
 export type MiseToolPreset = {
@@ -70,30 +94,17 @@ export type PresetsData = {
  * means no key (provider effectively disabled).
  */
 export type ProviderConfigDisk = {
-  model?: string          // legacy single-model; migrated to models[] on read
-  models?: ModelEntry[]   // canonical multi-model format
+  models?: ModelEntryDisk[]
   baseUrl: string
   apiKey?: string
-  maxContextTokens?: number
-  enabled?: boolean       // provider-level toggle, default true
+  enabled?: boolean
 }
 
 /** Runtime/resolved shape — apiKey is the actual string after resolution. */
 export type ProviderConfig = {
-  /** Canonical model list (at least one entry after migration). */
   models: ModelEntry[]
   baseUrl: string
-  /** Resolved at load time: `${VAR}` references in the disk apiKey are
-   *  expanded against the active vault's envs/. Empty string if the
-   *  referenced env doesn't exist (provider effectively disabled). */
   apiKey: string
-  /**
-   * Context window size for this model (in tokens). Used to set the
-   * auto-compact trigger via CLAUDE_CODE_AUTO_COMPACT_WINDOW so CC
-   * compacts before hitting the limit. Safe to set for any model —
-   * for known Claude models CC auto-detects but the override is harmless.
-   */
-  maxContextTokens?: number
   enabled: boolean
 }
 
@@ -321,14 +332,14 @@ export function pickProvider(
  *  Claude Agent SDK which speaks the Anthropic Messages API — only providers
  *  that expose an Anthropic-compatible endpoint work directly.
  *  Each provider is disabled by default; the user supplies an API key. */
-import { PROVIDER_PRESETS } from "./presets"
+import { DEFAULT_PROVIDER_PRESETS } from "./presets"
 
 function buildPresetProviders(): Record<string, ProviderConfig> {
   return Object.fromEntries(
-    PROVIDER_PRESETS.map(p => [
+    DEFAULT_PROVIDER_PRESETS.map(p => [
       p.name,
       {
-        models: p.models.map(id => ({ id, enabled: true })),
+        models: p.models.map(m => normalizeModelEntry(m)),
         baseUrl: p.baseUrl,
         apiKey: "",
         enabled: false,
@@ -343,7 +354,7 @@ const WORKSPACE_TEMPLATE: WorkspaceConfig = {
 }
 
 const PERSONAL_TEMPLATE: PersonalConfig = {
-  default: PROVIDER_PRESETS[0] ? `${PROVIDER_PRESETS[0].name}/${PROVIDER_PRESETS[0].models[0]}` : "",
+  default: DEFAULT_PROVIDER_PRESETS[0] ? `${DEFAULT_PROVIDER_PRESETS[0].name}/${normalizeModelEntry(DEFAULT_PROVIDER_PRESETS[0].models[0]).id}` : "",
   providers: buildPresetProviders(),
   vaultEnvs: {},
   repos: [],
@@ -354,11 +365,11 @@ const PERSONAL_TEMPLATE: PersonalConfig = {
 const PERSONAL_DISK_TEMPLATE: PersonalConfigDisk = {
   providers: (() => {
     const providers: Record<string, ProviderConfigDisk | string> = {
-      default: PROVIDER_PRESETS[0] ? `${PROVIDER_PRESETS[0].name}/${PROVIDER_PRESETS[0].models[0]}` : "",
+      default: DEFAULT_PROVIDER_PRESETS[0] ? `${DEFAULT_PROVIDER_PRESETS[0].name}/${normalizeModelEntry(DEFAULT_PROVIDER_PRESETS[0].models[0]).id}` : "",
     }
-    for (const p of PROVIDER_PRESETS) {
+    for (const p of DEFAULT_PROVIDER_PRESETS) {
       providers[p.name] = {
-        models: p.models.map(id => ({ id, enabled: true })),
+        models: p.models.map(m => normalizeModelEntry(m)),
         baseUrl: p.baseUrl,
         enabled: false,
       }
@@ -388,13 +399,8 @@ export async function loadConfig(): Promise<WorkspaceConfig> {
   if (cachedWorkspace && mtimeMs === cachedWorkspaceMtimeMs) return cachedWorkspace
   const raw = await readFile(path, "utf8")
   const parsed = JSON.parse(raw) as WorkspaceConfig
-  // Normalize legacy single-model providers to canonical models[] format.
   if (parsed.providers) {
-    for (const [name, p] of Object.entries(parsed.providers)) {
-      const disk = p as any
-      if (!disk.models && disk.model) {
-        ;(p as any).models = [{ id: disk.model, enabled: true }]
-      }
+    for (const [, p] of Object.entries(parsed.providers)) {
       if (p.enabled === undefined) (p as any).enabled = true
     }
   }
@@ -496,16 +502,15 @@ export async function loadPersonalConfig(
       const vaultPath = join(personalVaultDir(user, vault), (p.apiKey as any).vault as string)
       try { apiKey = (await readFile(vaultPath, "utf8")).trim() } catch {}
     }
-    // Normalize legacy single-model to canonical models[] format.
-    const models: ModelEntry[] = p.models && p.models.length > 0
-      ? p.models.map(m => ({ id: m.id, enabled: m.enabled !== false }))
-      : (p.model ? [{ id: p.model, enabled: true }] : [])
+    // Normalize: mixed string|object → canonical ModelEntry[].
+    const models: ModelEntry[] = Array.isArray(p.models)
+      ? p.models.map(m => normalizeModelEntry(m as ModelEntryDisk))
+      : []
     providers[name] = {
       models,
       baseUrl: p.baseUrl,
       apiKey,
       enabled: p.enabled !== false,
-      ...(p.maxContextTokens ? { maxContextTokens: p.maxContextTokens } : {}),
     }
   }
 
@@ -558,6 +563,23 @@ export function getActiveProvider(cfg: PersonalConfig): { name: string; provider
   const { providerName } = parseDefault(raw)
   if (!providerName || !cfg.providers[providerName]) return null
   return { name: providerName, provider: cfg.providers[providerName] }
+}
+
+export function getModelByTier(
+  provider: ProviderConfig,
+  tier: ModelTier,
+): ModelEntry | undefined {
+  const exact = provider.models.find(m => resolveTier(m) === tier)
+  if (exact) return exact
+  const fallbackOrder: ModelTier[] =
+    tier === "haiku"  ? ["sonnet", "opus"] :
+    tier === "opus"   ? ["sonnet"] :
+                        ["opus", "haiku"]
+  for (const fb of fallbackOrder) {
+    const m = provider.models.find(m => resolveTier(m) === fb)
+    if (m) return m
+  }
+  return provider.models[0]
 }
 
 /**
@@ -644,10 +666,8 @@ export async function savePersonalDisk(
         return { ok: false, error: `provider "${name}" must be an object` }
       }
       const p = val as ProviderConfigDisk
-      const hasModels = Array.isArray(p.models) && p.models.length > 0
-      const hasModel = typeof p.model === "string"
-      if (!hasModels && !hasModel) {
-        return { ok: false, error: `provider "${name}" missing models (or legacy model)` }
+      if (!Array.isArray(p.models) || p.models.length === 0) {
+        return { ok: false, error: `provider "${name}" missing models` }
       }
       if (typeof p.baseUrl !== "string") {
         return { ok: false, error: `provider "${name}" missing baseUrl` }
@@ -746,7 +766,7 @@ async function readPersonalDisk(user: string): Promise<PersonalConfigDisk> {
  */
 export async function savePersonalConfig(user: string, cfg: {
   default?: string
-  providers?: Record<string, { model?: string; models?: ModelEntry[]; baseUrl: string; apiKey?: string; maxContextTokens?: number; enabled?: boolean }>
+  providers?: Record<string, { models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean }>
 }): Promise<void> {
   const disk = await readPersonalDisk(user)
   const existingDefault = typeof disk.providers.default === "string" ? disk.providers.default : ""
@@ -779,14 +799,13 @@ export async function savePersonalConfig(user: string, cfg: {
         // No new key, no existing key → leave field unset (provider disabled).
         apiKeyField = undefined
       }
-      const models: ModelEntry[] = p.models && p.models.length > 0
-        ? p.models.map(m => ({ id: m.id, ...(m.enabled === false ? { enabled: false } : {}) }))
-        : (p.model ? [{ id: p.model, enabled: true }] : [])
+      const models: ModelEntry[] = Array.isArray(p.models)
+        ? p.models.map(m => normalizeModelEntry(m as ModelEntryDisk))
+        : []
       rebuilt[name] = {
         baseUrl: p.baseUrl,
         ...(apiKeyField !== undefined ? { apiKey: apiKeyField } : {}),
         ...(models.length > 0 ? { models } : {}),
-        ...(p.maxContextTokens ? { maxContextTokens: p.maxContextTokens } : {}),
         ...(p.enabled === false ? { enabled: false } : {}),
       }
     }
@@ -829,14 +848,12 @@ export async function saveWorkspaceConfig(cfg: Partial<WorkspaceConfig>): Promis
     for (const [name, p] of Object.entries(cfg.providers)) {
       const existingProv = merged.providers[name]
       const incoming = p as any
-      // Normalize to canonical models[] format.
       const models: ModelEntry[] = incoming.models?.length > 0
-        ? incoming.models.map((m: any) => ({ id: m.id, ...(m.enabled === false ? { enabled: false } : {}) }))
-        : existingProv?.models ?? (incoming.model ? [{ id: incoming.model, enabled: true }] : [])
+        ? incoming.models.map((m: any) => normalizeModelEntry(m as ModelEntryDisk))
+        : existingProv?.models ?? []
       merged.providers[name] = {
         models,
         baseUrl: incoming.baseUrl ?? existingProv?.baseUrl ?? "",
-        ...(incoming.maxContextTokens ? { maxContextTokens: incoming.maxContextTokens } : {}),
         apiKey: incoming.apiKey || existingProv?.apiKey || "",
         enabled: incoming.enabled !== undefined ? incoming.enabled : (existingProv?.enabled ?? true),
       } as any

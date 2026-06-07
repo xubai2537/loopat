@@ -625,14 +625,13 @@ app.get("/api/settings/personal", requireAuth, async (c) => {
   const userId = c.get("userId") as string
   const cfg = await loadPersonalConfig(userId)
   const tokenUsage = queryUserTokenUsage(userId)
-  const providers: Record<string, { models: ModelEntry[]; baseUrl: string; hasKey: boolean; enabled: boolean; maxContextTokens?: number }> = {}
+  const providers: Record<string, { models: ModelEntry[]; baseUrl: string; hasKey: boolean; enabled: boolean }> = {}
   for (const [name, p] of Object.entries(cfg.providers)) {
     providers[name] = {
       models: p.models,
       baseUrl: p.baseUrl,
       hasKey: !!p.apiKey,
       enabled: p.enabled,
-      ...(p.maxContextTokens ? { maxContextTokens: p.maxContextTokens } : {}),
     }
   }
   return c.json({
@@ -3032,13 +3031,11 @@ app.get(
                   p = wCfg.providers?.[msg.provider]
                 }
                 if (p) {
-                  const activeModel = selectedModel ?? p.models.find(m => m.enabled !== false)?.id ?? p.models[0]?.id ?? ""
+                  const activeModel = selectedModel ?? p.models[0]?.id ?? ""
                   const activeModelEntry = p.models.find(m => m.id === activeModel)
                   const ctxWindow = activeModelEntry?.maxContextTokens && activeModelEntry.maxContextTokens > 0
                     ? activeModelEntry.maxContextTokens
-                    : p.maxContextTokens && p.maxContextTokens > 0
-                      ? p.maxContextTokens
-                      : 200_000
+                    : 200_000
                   ws.send(JSON.stringify({
                     type: "provider",
                     name: msg.provider,

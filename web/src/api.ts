@@ -1084,7 +1084,7 @@ export async function listTopics(): Promise<TopicAggregate[]> {
   return j.topics as TopicAggregate[]
 }
 
-export type ModelEntry = { id: string; enabled?: boolean; maxContextTokens?: number }
+export type ModelEntry = { id: string; maxContextTokens?: number }
 export type ProviderInfo = { model?: string; models: ModelEntry[]; baseUrl: string; source: "personal" | "workspace"; enabled: boolean; hasKey: boolean }
 export type ProvidersResponse = { providers: Record<string, ProviderInfo>; default: string }
 export async function getProviders(): Promise<ProvidersResponse> {
@@ -1266,7 +1266,6 @@ export type SettingsProvider = {
   baseUrl: string
   hasKey?: boolean
   enabled: boolean
-  maxContextTokens?: number
   apiKey?: string
 }
 
@@ -1290,7 +1289,7 @@ export async function getPersonalSettings(): Promise<PersonalSettings> {
 }
 
 export async function updatePersonalSettings(patch: {
-  providers?: Record<string, { model: string; baseUrl: string; apiKey?: string; maxContextTokens?: number }>
+  providers?: Record<string, { model: string; baseUrl: string; apiKey?: string }>
   default?: string
 }): Promise<boolean> {
   const r = await apiFetch("/api/settings/personal", {
@@ -1304,12 +1303,10 @@ export async function updatePersonalSettings(patch: {
 // ── disk-shape settings (rich Settings page) ──
 
 export type ProviderDisk = {
-  model?: string
   models?: ModelEntry[]
   baseUrl: string
   /** Plain string; may contain `${VAR}` references resolved against vault envs/ at load. */
   apiKey?: string
-  maxContextTokens?: number
   enabled?: boolean
 }
 
@@ -1366,7 +1363,7 @@ export async function getWorkspaceSettings(): Promise<WorkspaceSettings> {
 }
 
 export async function updateWorkspaceSettings(patch: {
-  providers?: Record<string, { model?: string; models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean }>
+  providers?: Record<string, { models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean }>
   default?: string
 }): Promise<boolean> {
   const r = await apiFetch("/api/settings/workspace", {
@@ -1404,10 +1401,18 @@ export async function getLoopTokenUsage(): Promise<LoopTokenUsage[]> {
 
 // ── admin presets ──
 
+export type ProviderPresetModel = string | { id: string; tier?: "opus" | "sonnet" | "haiku" }
+
 export type ProviderPreset = {
   name: string
   baseUrl: string
-  models: string[]
+  models: ProviderPresetModel[]
+}
+
+/** Normalize a preset model entry to { id, tier? }. */
+export function normalizePresetModel(m: ProviderPresetModel): { id: string; tier?: "opus" | "sonnet" | "haiku" } {
+  if (typeof m === "string") return { id: m }
+  return m
 }
 
 export type MiseToolPreset = {

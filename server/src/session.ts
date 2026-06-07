@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { loopClaudeDir, loopDir, loopHistoryPath, personalSkillsDir, workspaceTeamSkillsDir } from "./paths"
 import { appendLoopUsage, appendLoopUsageClear, insertUsageDb, type UsageEntry } from "./usage"
 import { resolveSandboxClaudeBinary } from "./claude-binary"
-import { loadConfig, loadPersonalConfig, parseDefault, pickProvider, type ProviderConfig } from "./config"
+import { loadConfig, loadPersonalConfig, parseDefault, getModelByTier, pickProvider, type ProviderConfig } from "./config"
 import { buildLoopatAppend } from "./system-prompt"
 import { composeLoopClaudeConfig, writeLoopSettings } from "./compose"
 import { ensureLoopPluginsInstalled, lookupPluginInstallPath, BUILTIN_LOOPAT_PLUGIN_PATH } from "./plugin-installer"
@@ -17,6 +17,7 @@ import { ensureContainer, buildPodmanExecArgs, buildLoopEnv, markActive, markIna
 import { updateLoopStatus, setLoopPhase } from "./loop-status"
 import { tracer, withSpan } from "./tracer"
 import { SpanStatusCode, type Span } from "@opentelemetry/api"
+import { generateTitle } from "./auto-title"
 
 // Tests override LOOPAT_CLAUDE_BIN to point at a mock binary (a script that
 // reads stream-json from stdin and writes canned messages back) so we can
@@ -52,18 +53,9 @@ async function readSkillDescription(skillsDir: string, skillName: string): Promi
 // Re-exported here for backward compat with tests that import from session.
 export { pickProvider } from "./config"
 
-/**
- * Mirror cli's ff(): explicit override wins; otherwise [1m] tag → 1M;
- * any claude opus-4-7/4-6/sonnet-4/sonnet-4-6 → still defaults to 200K
- * unless tagged [1m] (1M is opt-in via beta on those). Fallback 200K.
- */
 function resolveContextWindow(p: ProviderConfig, modelId?: string): number {
-  // Per-model override takes precedence
   const model = modelId ? p.models.find(m => m.id === modelId) : undefined
   if (model?.maxContextTokens && model.maxContextTokens > 0) return model.maxContextTokens
-  // Provider-level fallback
-  if (p.maxContextTokens && p.maxContextTokens > 0) return p.maxContextTokens
-  if (/\[1m\]/i.test(model?.id ?? p.models[0]?.id ?? "")) return 1_000_000
   return 200_000
 }
 
@@ -215,6 +207,10 @@ class LoopSession {
   private ttfbSpan: Span | null = null
   private usageSession = 0
   private currentDriver: string | null = null
+  private autoTitleDone = false
+  private providerApiKey: string | null = null
+  private providerBaseUrl: string | null = null
+  private resolvedProvider: ProviderConfig | null = null
 
   constructor(id: string) {
     this.id = id
@@ -357,6 +353,9 @@ class LoopSession {
     }
     const providerName = resolved.name
     const provider = resolved.provider
+    this.providerApiKey = provider.apiKey
+    this.providerBaseUrl = provider.baseUrl
+    this.resolvedProvider = provider
 
     const loopatAppend = await buildLoopatAppend(meta)
     const loopId = this.id
@@ -399,8 +398,6 @@ class LoopSession {
       }
     }
 
-    // Unified env for the loop — same for SDK and PTY. buildLoopEnv resolves
-    // vault secrets, provider credentials, CC config dir, and compact threshold.
     const extraEnv = await buildLoopEnv({
       loopId,
       driver,
@@ -408,6 +405,18 @@ class LoopSession {
       providerOverride: this.providerOverride ?? meta.config?.default_model,
       modelIdOverride: meta.config?.default_model_id,
     })
+
+    let modelId: string | undefined = meta.config?.default_model_id
+    if (!modelId) {
+      const pCfg = await loadPersonalConfig(driver, meta.config?.vault)
+      const defaultParsed = parseDefault(pCfg.default)
+      if (defaultParsed.modelId && defaultParsed.providerName === providerName) {
+        modelId = defaultParsed.modelId
+      }
+    }
+    const activeModel = (modelId ? provider.models.find(m => m.id === modelId) : undefined)
+      ?? provider.models[0]
+    const autoCompactWindow = activeModel?.maxContextTokens
     // Ensure the per-loop podman container exists and is running. Idempotent:
     // if the container is already up with the same config-hash, no-op.
     let building = false
@@ -439,7 +448,11 @@ class LoopSession {
       console.error(`[sdk:${tag}] config: binary=${claudeBinary}`)
     }
 
-    const activeModel = provider.models.find(m => m.enabled !== false) ?? provider.models[0]
+    const modelOverrides: Record<string, string> = {}
+    const opusModel = getModelByTier(provider, "opus")
+    const haikuModel = getModelByTier(provider, "haiku")
+    if (opusModel && opusModel.id !== activeModel?.id) modelOverrides["claude-opus-4-7"] = opusModel.id
+    if (haikuModel) modelOverrides["claude-haiku-4-5"] = haikuModel.id
 
     this.q = query({
       prompt: this.input.iter,
@@ -450,6 +463,10 @@ class LoopSession {
           ...extraEnv,
         },
         model: activeModel?.id ?? "",
+        settings: {
+          ...(Object.keys(modelOverrides).length > 0 ? { modelOverrides } : {}),
+          ...(autoCompactWindow && autoCompactWindow > 0 ? { autoCompactWindow } : {}),
+        },
         permissionMode: this.currentPermissionMode,
         // Required by SDK when using permissionMode: "bypassPermissions"
         ...(this.currentPermissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
@@ -725,6 +742,10 @@ class LoopSession {
           resultReceived = true
           this.turnSpan?.end()
           this.turnSpan = null
+          if (!(msg as any).parent_tool_use_id && !this.autoTitleDone) {
+            this.autoTitleDone = true
+            this.tryAutoTitle()
+          }
         } else if (
           // Inject queued messages at tool-result boundaries — matching
           // real Claude Code's per-step queue consumption.
@@ -946,6 +967,38 @@ class LoopSession {
     }
   }
 
+  private tryAutoTitle() {
+    if (!this.providerApiKey || !this.providerBaseUrl || !this.resolvedProvider) return
+    const apiKey = this.providerApiKey
+    const baseUrl = this.providerBaseUrl
+    const model = getModelByTier(this.resolvedProvider, "haiku")?.id ?? this.resolvedProvider.models[0]?.id ?? ""
+    const loopId = this.id
+    const history = this.history
+
+    getLoop(loopId).then((meta) => {
+      if (!meta || meta.title !== "untitled") return
+      const userMsg = history.find((m: any) => m.type === "user")
+      const userText = typeof userMsg?.content === "string"
+        ? userMsg.content
+        : (userMsg as any)?.message?.content?.[0]?.text ?? ""
+      if (!userText) return
+      const assistantText = history
+        .filter((m: any) => m.type === "assistant")
+        .flatMap((m: any) => m.message?.content ?? m.content ?? [])
+        .find((b: any) => b?.type === "text")?.text ?? ""
+
+      generateTitle(baseUrl, apiKey, model, userText, assistantText)
+        .then(async (title) => {
+          if (!title) return
+          const current = await getLoop(loopId)
+          if (!current || current.title !== "untitled") return
+          await patchLoopMeta(loopId, { title })
+          this.broadcast({ type: "title_changed", title })
+        })
+        .catch(() => {})
+    }).catch(() => {})
+  }
+
   /**
    * Read subdirectory names from a path — silently returns [] if missing.
    * Includes symlinks (composeTier creates symlinks-to-dirs under
@@ -1044,7 +1097,6 @@ class LoopSession {
             } catch {}
           }
           const activeModel = (attachModelId ? resolved.provider.models.find(m => m.id === attachModelId) : undefined)
-            ?? resolved.provider.models.find(m => m.enabled !== false)
             ?? resolved.provider.models[0]
           const activeModelId = activeModel?.id ?? ""
           ws.send(JSON.stringify({

@@ -33,7 +33,7 @@ export default function ModelSelector() {
     for (const [provName, info] of Object.entries(providers.providers)) {
       if (info.enabled === false || !info.hasKey) continue;
       for (const m of info.models ?? []) {
-        if (m.enabled === false) continue;
+
         const q = search.toLowerCase().trim();
         if (q && !m.id.toLowerCase().includes(q) && !provName.toLowerCase().includes(q)) continue;
         result.push({ provName, modelId: m.id, source: info.source });

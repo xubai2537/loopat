@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import {
   getAdminPresets,
   updateAdminPresets,
+  normalizePresetModel,
   type ProviderPreset,
   type MiseToolPreset,
   type PresetsData,
@@ -169,8 +170,11 @@ function ProviderPresetsEditor({
                   </td>
                   <td className="px-3 py-2 hidden sm:table-cell">
                     <textarea
-                      value={p.models.join("\n")}
-                      onChange={(e) => update(idx, { models: e.target.value.split("\n").map(s => s.trim()).filter(Boolean) })}
+                      value={p.models.map(m => normalizePresetModel(m).id).join("\n")}
+                      onChange={(e) => update(idx, { models: e.target.value.split("\n").map(s => s.trim()).filter(Boolean).map(id => {
+                        const existing = p.models.find(m => normalizePresetModel(m).id === id)
+                        return existing ?? id
+                      })})}
                       disabled={saving}
                       rows={Math.max(1, p.models.length)}
                       className={inputClassSm + " resize-none"}

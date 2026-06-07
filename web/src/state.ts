@@ -27,6 +27,7 @@ export type WorkspaceState = {
   setLoopArchived: (id: string, archived: boolean) => Promise<void>
   setLoopPublic: (id: string, isPublic: boolean) => Promise<void>
   setLoopTitle: (id: string, title: string) => Promise<LoopMeta | null>
+  updateLoopInPlace: (id: string, patch: Partial<LoopMeta>) => void
   requestDrive: (id: string) => Promise<void>
   takeDrive: (id: string) => Promise<void>
   newLoopDialogOpen: boolean
@@ -111,6 +112,10 @@ export function useWorkspaceState(): WorkspaceState {
     return updated
   }, [])
 
+  const updateLoopInPlace = useCallback((id: string, patch: Partial<LoopMeta>) => {
+    setLoops((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)))
+  }, [])
+
   const requestDrive = useCallback(async (id: string) => {
     const updated = await apiRequestDrive(id)
     if (!updated) return
@@ -171,6 +176,7 @@ export function useWorkspaceState(): WorkspaceState {
     setLoopArchived,
     setLoopPublic,
     setLoopTitle,
+    updateLoopInPlace,
     requestDrive,
     takeDrive,
     newLoopDialogOpen,

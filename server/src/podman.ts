@@ -403,28 +403,7 @@ export async function buildLoopEnv(opts: {
   if (resolved) {
     env.ANTHROPIC_API_KEY = resolved.provider.apiKey
     env.ANTHROPIC_BASE_URL = resolved.provider.baseUrl
-
-    let modelId = opts.modelIdOverride
-    if (!modelId) {
-      const defaultParsed = parseDefault(pCfg.default)
-      if (defaultParsed.modelId && defaultParsed.providerName === resolved.name) {
-        modelId = defaultParsed.modelId
-      }
-    }
-    const activeModel = (modelId ? resolved.provider.models.find(m => m.id === modelId) : undefined)
-      ?? resolved.provider.models.find(m => m.enabled !== false)
-      ?? resolved.provider.models[0]
-    const contextTokenOverride = activeModel?.maxContextTokens ?? resolved.provider.maxContextTokens
-    if (contextTokenOverride && contextTokenOverride > 0) {
-      env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(contextTokenOverride)
-    }
   }
-
-  // Override legacy env vars that old containers may carry from a prior code
-  // version. Empty string is falsy in JS, effectively unsetting them at
-  // podman exec time without needing to recreate the container.
-  env.DISABLE_COMPACT = ""
-  env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = ""
 
   return env
 }

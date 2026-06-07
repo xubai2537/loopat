@@ -17,6 +17,7 @@ import {
   setServeConfig,
   testProviderConnection,
   getAdminPresets,
+  normalizePresetModel,
   type AdminUser,
   type WorkspaceSettings,
   type ModelEntry,
@@ -244,7 +245,6 @@ type WorkspaceDraft = {
   providers: Record<string, {
     models: ModelEntry[]
     baseUrl: string
-    maxContextTokens?: number
     apiKey: string
     keyDirty: boolean
     hasKey: boolean
@@ -281,11 +281,9 @@ export function WorkspacePanel() {
         next.providers[name] = {
           models: (prov as any).models?.map((m: any) => ({
             id: m.id,
-            enabled: m.enabled !== false,
             ...(m.maxContextTokens && m.maxContextTokens > 0 ? { maxContextTokens: m.maxContextTokens } : {}),
           })) ?? [],
           baseUrl: prov.baseUrl ?? "",
-          maxContextTokens: (prov as any).maxContextTokens || undefined,
           apiKey: "",
           keyDirty: false,
           hasKey: prov.hasKey ?? false,
@@ -326,16 +324,6 @@ export function WorkspacePanel() {
     })
   }
 
-  const toggleModel = (provName: string, modelId: string) => {
-    setDraft((d) => {
-      if (!d || !d.providers[provName]) return d
-      const models = d.providers[provName].models.map(m =>
-        m.id === modelId ? { ...m, enabled: !m.enabled } : m,
-      )
-      return { ...d, providers: { ...d.providers, [provName]: { ...d.providers[provName], models } } }
-    })
-  }
-
   const removeModel = (provName: string, modelId: string) => {
     setDraft((d) => {
       if (!d || !d.providers[provName]) return d
@@ -357,7 +345,7 @@ export function WorkspacePanel() {
           ...d.providers,
           [provName]: {
             ...d.providers[provName],
-            models: [...d.providers[provName].models, { id, enabled: true }],
+            models: [...d.providers[provName].models, { id }],
           },
         },
       }
@@ -424,14 +412,12 @@ export function WorkspacePanel() {
           .filter(m => m.id.trim())
           .map(m => ({
             id: m.id.trim(),
-            ...(m.enabled ? {} : { enabled: false }),
             ...(m.maxContextTokens && m.maxContextTokens > 0 ? { maxContextTokens: m.maxContextTokens } : {}),
           }))
         out[name] = {
           models,
           baseUrl: p.baseUrl,
           enabled: p.enabled,
-          ...(p.maxContextTokens && p.maxContextTokens > 0 ? { maxContextTokens: p.maxContextTokens } : {}),
         }
         if (p.keyDirty && p.apiKey.trim()) out[name].apiKey = p.apiKey.trim()
       }
@@ -521,15 +507,6 @@ export function WorkspacePanel() {
                     className={inputClass}
                   />
                 </Labeled>
-                <Labeled label="Max context tokens">
-                  <input
-                    type="number"
-                    value={p.maxContextTokens ?? ""}
-                    onChange={(e) => updateProv(name, { maxContextTokens: e.target.value ? Number(e.target.value) : undefined })}
-                    placeholder="auto"
-                    className={inputClass}
-                  />
-                </Labeled>
                 <Labeled label={p.hasKey && !p.keyDirty ? "API Key (set — type to overwrite)" : "API Key"} className="sm:col-span-2">
                   <input
                     type="password"
@@ -592,14 +569,6 @@ export function WorkspacePanel() {
                       >
                         ★
                       </button>
-                      <label className="flex items-center shrink-0 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={m.enabled !== false}
-                          onChange={() => toggleModel(name, m.id)}
-                          className="h-3.5 w-3.5 rounded border-gray-300 text-gray-900 accent-gray-900"
-                        />
-                      </label>
                       <div className="flex-1 min-w-0 flex items-center gap-1">
                         {isEditing ? (
                           <input
@@ -615,17 +584,12 @@ export function WorkspacePanel() {
                           />
                         ) : (
                           <code
-                            className={`text-[12px] truncate cursor-pointer hover:bg-gray-100 px-0.5 rounded ${
-                              m.enabled !== false ? "text-gray-700" : "text-gray-300 line-through"
-                            }`}
+                            className="text-[12px] truncate cursor-pointer hover:bg-gray-100 px-0.5 rounded text-gray-700"
                             onClick={() => { setEditingModelKey(editKey); setNewModelIdValue(m.id) }}
                             title="click to edit model ID"
                           >
                             {m.id}
                           </code>
-                        )}
-                        {m.enabled === false && (
-                          <span className="text-[9px] text-gray-300 font-medium shrink-0">off</span>
                         )}
                       </div>
                       <input
@@ -712,7 +676,7 @@ export function WorkspacePanel() {
                   providers: {
                     ...d.providers,
                     [p.name]: {
-                      models: p.models.map((id) => ({ id, enabled: true })),
+                      models: p.models.map((m) => { const n = normalizePresetModel(m); return { id: n.id } }),
                       baseUrl: p.baseUrl,
                       apiKey: "",
                       keyDirty: false,

@@ -35,7 +35,7 @@ import { UsersPanel, WorkspacePanel as AdminWorkspacePanel, ServePanel } from ".
 import { ClaudeConfigPanel } from "../components/settings/ClaudeConfigPanel"
 import { MiseConfigPanel } from "../components/settings/MiseConfigPanel"
 import { PresetsPanel } from "../components/settings/PresetsPanel"
-import { getAdminPresets, type ProviderPreset } from "../api"
+import { getAdminPresets, normalizePresetModel, type ProviderPreset } from "../api"
 import { TokenUsagePage } from "./TokenUsagePage"
 import { useWorkspace } from "@/ctx"
 import { ArrowLeft, Plus, Trash2, RefreshCw, Check, AlertCircle, Lock, FileCode2, Search, User, Cpu, Terminal, Layers, BarChart3, Users, Globe, Share2, KeyRound, Copy, Wrench, Bookmark } from "lucide-react"
@@ -351,7 +351,6 @@ type ProvidersDraft = {
   providers: Record<string, {
     models: ModelEntry[]
     baseUrl: string
-    maxContextTokens: string
     enabled: boolean
     apiKeyNewValue: string
     apiKeyStored: boolean
@@ -395,10 +394,9 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
         const refInfo = refExists[`providers.${name}.apiKey`]
         next.providers[name] = {
           models: (p.models && p.models.length > 0)
-            ? p.models.map(m => ({ id: m.id, enabled: m.enabled !== false }))
-            : (p.model ? [{ id: p.model, enabled: true }] : []),
+            ? p.models.map(m => typeof m === "string" ? { id: m } : { id: m.id, ...(m.maxContextTokens ? { maxContextTokens: m.maxContextTokens } : {}) })
+            : [],
           baseUrl: p.baseUrl ?? "",
-          maxContextTokens: p.maxContextTokens ? String(p.maxContextTokens) : "",
           enabled: p.enabled !== false,
           apiKeyNewValue: "",
           apiKeyStored: !!refInfo?.exists,
@@ -436,16 +434,6 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
     })
   }
 
-  const toggleModel = (provName: string, modelId: string) => {
-    setDraft((d) => {
-      if (!d || !d.providers[provName]) return d
-      const models = d.providers[provName].models.map(m =>
-        m.id === modelId ? { ...m, enabled: !m.enabled } : m,
-      )
-      return { ...d, providers: { ...d.providers, [provName]: { ...d.providers[provName], models } } }
-    })
-  }
-
   const removeModel = (provName: string, modelId: string) => {
     setDraft((d) => {
       if (!d || !d.providers[provName]) return d
@@ -467,7 +455,7 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
           ...d.providers,
           [provName]: {
             ...d.providers[provName],
-            models: [...d.providers[provName].models, { id, enabled: true }],
+            models: [...d.providers[provName].models, { id }],
           },
         },
       }
@@ -518,7 +506,7 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
       if (!d) return d
       if (d.providers[n]) return d
       return { ...d, providers: { ...d.providers, [n]: {
-        models: [], baseUrl: "", maxContextTokens: "", enabled: false,
+        models: [], baseUrl: "", enabled: false,
         apiKeyNewValue: "", apiKeyStored: false,
       } } }
     })
@@ -547,14 +535,12 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
         .filter(m => m.id.trim())
         .map(m => ({
           id: m.id.trim(),
-          ...(m.enabled ? {} : { enabled: false }),
           ...(m.maxContextTokens && m.maxContextTokens > 0 ? { maxContextTokens: m.maxContextTokens } : {}),
         }))
       providersOut[name] = {
         baseUrl: p.baseUrl,
         apiKey: `\${${providerEnvVarName(name)}}`,
         ...(models.length > 0 ? { models } : {}),
-        ...(p.maxContextTokens ? { maxContextTokens: Number(p.maxContextTokens) } : {}),
         ...(p.enabled ? {} : { enabled: false }),
       }
     }
@@ -642,15 +628,6 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
                     className={inputClass}
                   />
                 </Labeled>
-                <Labeled label="Max context tokens">
-                  <input
-                    type="number"
-                    value={p.maxContextTokens}
-                    onChange={(e) => updateProv(name, { maxContextTokens: e.target.value })}
-                    placeholder="auto"
-                    className={inputClass}
-                  />
-                </Labeled>
                 <Labeled label={p.apiKeyStored ? "API key (set — type to overwrite)" : "API key"} className="sm:col-span-2">
                   <input
                     type="password"
@@ -713,14 +690,6 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
                       >
                         ★
                       </button>
-                      <label className="flex items-center shrink-0 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={m.enabled !== false}
-                          onChange={() => toggleModel(name, m.id)}
-                          className="h-3.5 w-3.5 rounded border-gray-300 text-gray-900 accent-gray-900"
-                        />
-                      </label>
                       <div className="flex-1 min-w-0 flex items-center gap-1">
                         {isEditing ? (
                           <input
@@ -736,17 +705,12 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
                           />
                         ) : (
                           <code
-                            className={`text-[12px] truncate cursor-pointer hover:bg-gray-100 px-0.5 rounded ${
-                              m.enabled !== false ? "text-gray-700" : "text-gray-300 line-through"
-                            }`}
+                            className="text-[12px] truncate cursor-pointer hover:bg-gray-100 px-0.5 rounded text-gray-700"
                             onClick={() => { setEditingModelKey(editKey); setNewModelIdValue(m.id) }}
                             title="click to edit model ID"
                           >
                             {m.id}
                           </code>
-                        )}
-                        {m.enabled === false && (
-                          <span className="text-[10px] text-gray-300 font-medium shrink-0">off</span>
                         )}
                       </div>
                       <input
@@ -833,9 +797,8 @@ function ProvidersSection({ disk, refExists, onChanged, disabled }: {
                   providers: {
                     ...d.providers,
                     [p.name]: {
-                      models: p.models.map((id) => ({ id, enabled: true })),
+                      models: p.models.map((m) => { const n = normalizePresetModel(m); return { id: n.id } }),
                       baseUrl: p.baseUrl,
-                      maxContextTokens: "",
                       enabled: false,
                       apiKeyNewValue: "",
                       apiKeyStored: false,
