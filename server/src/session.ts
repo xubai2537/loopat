@@ -253,6 +253,7 @@ class LoopSession {
    */
   setProvider(name: string | null) {
     this.providerOverride = name
+    this.restartOnNextMessage()
     return true
   }
 
