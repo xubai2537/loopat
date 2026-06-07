@@ -98,6 +98,8 @@ export type ProviderConfigDisk = {
   baseUrl: string
   apiKey?: string
   enabled?: boolean
+  /** Claude Code canonical model ID -> provider model ID. Passed to SDK settings.modelOverrides. */
+  modelOverrides?: Record<string, string>
 }
 
 /** Runtime/resolved shape — apiKey is the actual string after resolution. */
@@ -106,6 +108,7 @@ export type ProviderConfig = {
   baseUrl: string
   apiKey: string
   enabled: boolean
+  modelOverrides?: Record<string, string>
 }
 
 export type RemoteSpec = {
@@ -511,6 +514,7 @@ export async function loadPersonalConfig(
       baseUrl: p.baseUrl,
       apiKey,
       enabled: p.enabled !== false,
+      ...(p.modelOverrides && typeof p.modelOverrides === "object" ? { modelOverrides: p.modelOverrides } : {}),
     }
   }
 
@@ -675,6 +679,16 @@ export async function savePersonalDisk(
       if (p.apiKey !== undefined && typeof p.apiKey !== "string" && !(typeof p.apiKey === "object" && typeof (p.apiKey as any).vault === "string")) {
         return { ok: false, error: `provider "${name}" apiKey must be a string or { vault }` }
       }
+      if (p.modelOverrides !== undefined) {
+        if (!p.modelOverrides || typeof p.modelOverrides !== "object" || Array.isArray(p.modelOverrides)) {
+          return { ok: false, error: `provider "${name}" modelOverrides must be an object` }
+        }
+        for (const [from, to] of Object.entries(p.modelOverrides)) {
+          if (typeof from !== "string" || !from || typeof to !== "string" || !to) {
+            return { ok: false, error: `provider "${name}" modelOverrides must map non-empty strings` }
+          }
+        }
+      }
     }
     const defName = patch.providers.default
     if (typeof defName === "string" && defName) {
@@ -766,7 +780,7 @@ async function readPersonalDisk(user: string): Promise<PersonalConfigDisk> {
  */
 export async function savePersonalConfig(user: string, cfg: {
   default?: string
-  providers?: Record<string, { models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean }>
+  providers?: Record<string, { models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean; modelOverrides?: Record<string, string> }>
 }): Promise<void> {
   const disk = await readPersonalDisk(user)
   const existingDefault = typeof disk.providers.default === "string" ? disk.providers.default : ""
@@ -807,6 +821,7 @@ export async function savePersonalConfig(user: string, cfg: {
         ...(apiKeyField !== undefined ? { apiKey: apiKeyField } : {}),
         ...(models.length > 0 ? { models } : {}),
         ...(p.enabled === false ? { enabled: false } : {}),
+        ...(p.modelOverrides && Object.keys(p.modelOverrides).length > 0 ? { modelOverrides: p.modelOverrides } : {}),
       }
     }
     disk.providers = rebuilt

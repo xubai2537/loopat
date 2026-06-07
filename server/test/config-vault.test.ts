@@ -195,6 +195,29 @@ describe("loadPersonalConfig — ${VAR} resolution in provider.apiKey", () => {
     expect(cfg.providers.anthropic.apiKey).toBe("sk-literal-abc")
   })
 
+  test("modelOverrides pass through provider config unchanged", async () => {
+    await writeConfig({
+      providers: {
+        default: "idealab/claude-opus-4-6",
+        idealab: {
+          baseUrl: "https://idealab.example.com/api/anthropic",
+          apiKey: "sk-literal-abc",
+          models: [{ id: "claude-opus-4-6", maxContextTokens: 1000000 }],
+          modelOverrides: {
+            "claude-sonnet-4-6": "claude-opus-4-6",
+            "claude-haiku-4-6": "claude-opus-4-6",
+          },
+        },
+      },
+    })
+    const cfg = await loadPersonalConfig(USER, "default")
+    expect(cfg.default).toBe("idealab/claude-opus-4-6")
+    expect(cfg.providers.idealab.modelOverrides).toEqual({
+      "claude-sonnet-4-6": "claude-opus-4-6",
+      "claude-haiku-4-6": "claude-opus-4-6",
+    })
+  })
+
   test("vaultEnvs exposes the loaded env map on cfg", async () => {
     await writeVaultEnv(USER, "default", "A_KEY", "av")
     await writeVaultEnv(USER, "default", "B_KEY", "bv")

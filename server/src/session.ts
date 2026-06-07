@@ -448,11 +448,7 @@ class LoopSession {
       console.error(`[sdk:${tag}] config: binary=${claudeBinary}`)
     }
 
-    const modelOverrides: Record<string, string> = {}
-    const opusModel = getModelByTier(provider, "opus")
-    const haikuModel = getModelByTier(provider, "haiku")
-    if (opusModel && opusModel.id !== activeModel?.id) modelOverrides["claude-opus-4-7"] = opusModel.id
-    if (haikuModel) modelOverrides["claude-haiku-4-5"] = haikuModel.id
+    const modelOverrides = provider.modelOverrides ?? {}
 
     this.q = query({
       prompt: this.input.iter,
@@ -1592,4 +1588,3 @@ export function restartSession(id: string): boolean {
   s.restartOnNextMessage()
   return true
 }
-
