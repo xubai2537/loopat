@@ -448,8 +448,6 @@ class LoopSession {
       console.error(`[sdk:${tag}] config: binary=${claudeBinary}`)
     }
 
-    const modelOverrides = provider.modelOverrides ?? {}
-
     this.q = query({
       prompt: this.input.iter,
       options: {
@@ -461,7 +459,6 @@ class LoopSession {
         model: activeModel?.id ?? "",
         thinking: { type: "adaptive" },
         settings: {
-          ...(Object.keys(modelOverrides).length > 0 ? { modelOverrides } : {}),
           ...(autoCompactWindow && autoCompactWindow > 0 ? { autoCompactWindow } : {}),
         },
         permissionMode: this.currentPermissionMode,
