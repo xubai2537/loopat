@@ -92,33 +92,33 @@ Preconditions are enforced at config load (fail, never skip): `podman`,
 ## Case layout — one subdir per case
 
 Every case is its own directory with a `README.md` (purpose, steps, expectation)
-and a `journey.spec.ts`. New browser+AI journeys live in `case-<name>/` and run
+and a `journey.spec.ts`. New browser+AI journeys live in `<name>/` and run
 via `bun run dogfood:journeys`. Suites with their own globalSetup keep their own
 config (`first-run`, `sync`, `subagent-model`).
 
-### Browser+AI journeys (`case-*/`, `bun run dogfood:journeys`)
+### Browser+AI journeys (`*/`, `bun run dogfood:journeys`)
 | Case | Purpose |
 |------|---------|
-| case-reply | AI replies with a deterministic token in the chat UI |
-| case-memory | cross-turn context: 2nd turn recalls 1st-turn fact |
-| case-tooluse | AI writes a file, proven via sandbox podman exec |
-| case-rename | rename keeps chat history |
-| case-twoloops | two loops stay isolated |
-| case-gitcommit | AI commit verified by worktree git log |
-| case-gitdiff | git-status API shows AI's uncommitted change |
-| case-gitstage | git-stage API stages an AI-created file |
-| case-restart | session restart keeps history + still replies |
-| case-readfile | loop workdir is the seeded roster1 worktree |
-| case-secondmsg | two sequential turns both reply |
-| case-filestree | AI-created file appears in workdir listing |
-| case-distill | distill returns a summary of a real turn |
-| case-folder | AI creates a nested file (sandbox truth) |
-| case-archive | archive hides loop from sidebar; restore returns it |
-| case-multistep | one instruction chains read+write tools |
-| case-interrupt | loop recovers after mid-turn interrupt |
-| case-contextfiles | loop context endpoint responds |
-| case-context | context freshness: cached records versions, snapshot reproduces |
-| case-ai-extra | chat-history export + restart-session in one turn |
+| reply | AI replies with a deterministic token in the chat UI |
+| memory | cross-turn context: 2nd turn recalls 1st-turn fact |
+| tooluse | AI writes a file, proven via sandbox podman exec |
+| rename | rename keeps chat history |
+| twoloops | two loops stay isolated |
+| gitcommit | AI commit verified by worktree git log |
+| gitdiff | git-status API shows AI's uncommitted change |
+| gitstage | git-stage API stages an AI-created file |
+| restart | session restart keeps history + still replies |
+| readfile | loop workdir is the seeded roster1 worktree |
+| secondmsg | two sequential turns both reply |
+| filestree | AI-created file appears in workdir listing |
+| distill | distill returns a summary of a real turn |
+| folder | AI creates a nested file (sandbox truth) |
+| archive | archive hides loop from sidebar; restore returns it |
+| multistep | one instruction chains read+write tools |
+| interrupt | loop recovers after mid-turn interrupt |
+| contextfiles | loop context endpoint responds |
+| context | context freshness: cached records versions, snapshot reproduces |
+| ai-extra | chat-history export + restart-session in one turn |
 
 ### Standalone suites (own config)
 | Dir | Run |
