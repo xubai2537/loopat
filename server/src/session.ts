@@ -253,6 +253,7 @@ class LoopSession {
    */
   setProvider(name: string | null) {
     this.providerOverride = name
+    this.restartOnNextMessage()
     return true
   }
 
@@ -448,12 +449,6 @@ class LoopSession {
       console.error(`[sdk:${tag}] config: binary=${claudeBinary}`)
     }
 
-    const modelOverrides: Record<string, string> = {}
-    const opusModel = getModelByTier(provider, "opus")
-    const haikuModel = getModelByTier(provider, "haiku")
-    if (opusModel && opusModel.id !== activeModel?.id) modelOverrides["claude-opus-4-7"] = opusModel.id
-    if (haikuModel) modelOverrides["claude-haiku-4-5"] = haikuModel.id
-
     this.q = query({
       prompt: this.input.iter,
       options: {
@@ -463,8 +458,8 @@ class LoopSession {
           ...extraEnv,
         },
         model: activeModel?.id ?? "",
+        thinking: { type: "adaptive" },
         settings: {
-          ...(Object.keys(modelOverrides).length > 0 ? { modelOverrides } : {}),
           ...(autoCompactWindow && autoCompactWindow > 0 ? { autoCompactWindow } : {}),
         },
         permissionMode: this.currentPermissionMode,
@@ -1591,4 +1586,3 @@ export function restartSession(id: string): boolean {
   s.restartOnNextMessage()
   return true
 }
-

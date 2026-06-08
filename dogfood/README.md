@@ -88,3 +88,43 @@ bun run dogfood:sync       # two-server context flow S0–S5 (release)
 
 Preconditions are enforced at config load (fail, never skip): `podman`,
 `git-crypt` (journey only), and the required env vars must all be present.
+
+## Case layout — one subdir per case
+
+Every case is its own directory with a `README.md` (purpose, steps, expectation)
+and a `journey.spec.ts`. New browser+AI journeys live in `<name>/` and run
+via `bun run dogfood:journeys`. Suites with their own globalSetup keep their own
+config (`first-run`, `sync`, `subagent-model`).
+
+### Browser+AI journeys (`*/`, `bun run dogfood:journeys`)
+| Case | Purpose |
+|------|---------|
+| reply | AI replies with a deterministic token in the chat UI |
+| memory | cross-turn context: 2nd turn recalls 1st-turn fact |
+| tooluse | AI writes a file, proven via sandbox podman exec |
+| rename | rename keeps chat history |
+| twoloops | two loops stay isolated |
+| gitcommit | AI commit verified by worktree git log |
+| gitdiff | git-status API shows AI's uncommitted change |
+| gitstage | git-stage API stages an AI-created file |
+| restart | session restart keeps history + still replies |
+| readfile | loop workdir is the seeded roster1 worktree |
+| secondmsg | two sequential turns both reply |
+| filestree | AI-created file appears in workdir listing |
+| distill | distill returns a summary of a real turn |
+| folder | AI creates a nested file (sandbox truth) |
+| archive | archive hides loop from sidebar; restore returns it |
+| multistep | one instruction chains read+write tools |
+| interrupt | loop recovers after mid-turn interrupt |
+| contextfiles | loop context endpoint responds |
+| context | context freshness: cached records versions, snapshot reproduces |
+| ai-extra | chat-history export + restart-session in one turn |
+
+### Standalone suites (own config)
+| Dir | Run |
+|-----|-----|
+| first-5-minutes | dogfood:smoke |
+| first-run | dogfood:journey |
+| sync | dogfood:sync |
+| subagent-model | dogfood:subagent |
+| attach-detach / concurrent-push / context-notes-sync / multi-turn-task / repos-page / second-loop-warm | dogfood |

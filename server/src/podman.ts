@@ -403,6 +403,12 @@ export async function buildLoopEnv(opts: {
   if (resolved) {
     env.ANTHROPIC_API_KEY = resolved.provider.apiKey
     env.ANTHROPIC_BASE_URL = resolved.provider.baseUrl
+    // Per-tier / subagent models: written → pass native CC env; absent → CC defaults.
+    const pv = resolved.provider
+    if (pv.opus_model) env.ANTHROPIC_DEFAULT_OPUS_MODEL = pv.opus_model
+    if (pv.sonnet_model) env.ANTHROPIC_DEFAULT_SONNET_MODEL = pv.sonnet_model
+    if (pv.haiku_model) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = pv.haiku_model
+    if (pv.agent_model) env.CLAUDE_CODE_SUBAGENT_MODEL = pv.agent_model
   }
 
   return env

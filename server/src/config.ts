@@ -98,6 +98,12 @@ export type ProviderConfigDisk = {
   baseUrl: string
   apiKey?: string
   enabled?: boolean
+  /** Per-tier model. Written → passed as ANTHROPIC_DEFAULT_*_MODEL; absent → CC native. */
+  opus_model?: string
+  sonnet_model?: string
+  haiku_model?: string
+  /** Subagent model → CLAUDE_CODE_SUBAGENT_MODEL. Absent → CC native. */
+  agent_model?: string
 }
 
 /** Runtime/resolved shape — apiKey is the actual string after resolution. */
@@ -106,6 +112,10 @@ export type ProviderConfig = {
   baseUrl: string
   apiKey: string
   enabled: boolean
+  opus_model?: string
+  sonnet_model?: string
+  haiku_model?: string
+  agent_model?: string
 }
 
 export type RemoteSpec = {
@@ -511,6 +521,10 @@ export async function loadPersonalConfig(
       baseUrl: p.baseUrl,
       apiKey,
       enabled: p.enabled !== false,
+      ...(typeof p.opus_model === "string" && p.opus_model ? { opus_model: p.opus_model } : {}),
+      ...(typeof p.sonnet_model === "string" && p.sonnet_model ? { sonnet_model: p.sonnet_model } : {}),
+      ...(typeof p.haiku_model === "string" && p.haiku_model ? { haiku_model: p.haiku_model } : {}),
+      ...(typeof p.agent_model === "string" && p.agent_model ? { agent_model: p.agent_model } : {}),
     }
   }
 
@@ -675,6 +689,11 @@ export async function savePersonalDisk(
       if (p.apiKey !== undefined && typeof p.apiKey !== "string" && !(typeof p.apiKey === "object" && typeof (p.apiKey as any).vault === "string")) {
         return { ok: false, error: `provider "${name}" apiKey must be a string or { vault }` }
       }
+      for (const f of ["opus_model", "sonnet_model", "haiku_model", "agent_model"] as const) {
+        if (p[f] !== undefined && (typeof p[f] !== "string" || !p[f])) {
+          return { ok: false, error: `provider "${name}" ${f} must be a non-empty string` }
+        }
+      }
     }
     const defName = patch.providers.default
     if (typeof defName === "string" && defName) {
@@ -766,7 +785,7 @@ async function readPersonalDisk(user: string): Promise<PersonalConfigDisk> {
  */
 export async function savePersonalConfig(user: string, cfg: {
   default?: string
-  providers?: Record<string, { models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean }>
+  providers?: Record<string, { models?: ModelEntry[]; baseUrl: string; apiKey?: string; enabled?: boolean; opus_model?: string; sonnet_model?: string; haiku_model?: string; agent_model?: string }>
 }): Promise<void> {
   const disk = await readPersonalDisk(user)
   const existingDefault = typeof disk.providers.default === "string" ? disk.providers.default : ""
@@ -807,6 +826,10 @@ export async function savePersonalConfig(user: string, cfg: {
         ...(apiKeyField !== undefined ? { apiKey: apiKeyField } : {}),
         ...(models.length > 0 ? { models } : {}),
         ...(p.enabled === false ? { enabled: false } : {}),
+        ...(p.opus_model ? { opus_model: p.opus_model } : {}),
+        ...(p.sonnet_model ? { sonnet_model: p.sonnet_model } : {}),
+        ...(p.haiku_model ? { haiku_model: p.haiku_model } : {}),
+        ...(p.agent_model ? { agent_model: p.agent_model } : {}),
       }
     }
     disk.providers = rebuilt

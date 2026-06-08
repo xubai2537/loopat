@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { execSync, execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { fileURLToPath } from "node:url"
@@ -6,6 +6,12 @@ import { dirname, resolve, join } from "node:path"
 import { createRequire } from "node:module"
 
 const execFileP = promisify(execFile)
+
+/** Which js package manager is available: prefer bun, fall back to npm. */
+async function detectAvailablePkgManager(): Promise<"bun" | "npm"> {
+  try { await execFileP("bun", ["--version"]); return "bun" } catch { /* bun not found */ }
+  return "npm" // let execFile's ENOENT surface naturally if npm is also missing
+}
 
 function detectIsMusl(): boolean {
   if (process.platform !== "linux") return false
@@ -97,11 +103,11 @@ export function resolveSandboxClaudeBinary(): string {
 /**
  * Make sure the sandbox's linux claude exists, fetching it if not. No-op on a
  * linux host (host claude IS the sandbox claude). On a non-linux host this runs
- * `npm install --force` (the platform binary has os=linux, so --os/--cpu hit
- * EBADPLATFORM; --force is what gets it). Pinned to the SDK version. Best-effort
- * and idempotent: once fetched, returns immediately. npx does NOT run package
- * postinstall scripts, so this boot-time fetch is what actually covers
- * `npx loopat`.
+ * `bun add` (preferred) or `npm install --force` (the platform binary has
+ * os=linux, so --os/--cpu hit EBADPLATFORM; --force is what gets it). Pinned to
+ * the SDK version. Best-effort and idempotent: once fetched, returns
+ * immediately. npx does NOT run package postinstall scripts, so this boot-time
+ * fetch is what actually covers `npx loopat` / `bunx loopat`.
  */
 export async function ensureSandboxClaudeBinary(onLog?: (m: string) => void): Promise<void> {
   if (process.platform === "linux") return
@@ -113,7 +119,15 @@ export async function ensureSandboxClaudeBinary(onLog?: (m: string) => void): Pr
   const dest = sandboxClaudeDir()
   mkdirSync(dest, { recursive: true })
   onLog?.(`host is ${process.platform}/${arch}; fetching linux claude for the sandbox (${spec})…`)
-  await execFileP("npm", ["install", "--prefix", dest, "--no-save", "--force", spec], { timeout: 180_000 })
+  const pm = await detectAvailablePkgManager()
+  onLog?.(`using ${pm}`)
+  if (pm === "bun") {
+    // bun add needs a package.json to anchor to; create a minimal one.
+    writeFileSync(join(dest, "package.json"), '{"private":true}')
+    await execFileP("bun", ["add", spec], { cwd: dest, timeout: 180_000 })
+  } else {
+    await execFileP("npm", ["install", "--prefix", dest, "--no-save", "--force", spec], { timeout: 180_000 })
+  }
   if (!existsSync(sandboxClaudeBinaryPath())) throw new Error(`fetch finished but ${sandboxClaudeBinaryPath()} missing`)
   onLog?.(`sandbox claude ready`)
 }

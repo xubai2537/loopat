@@ -121,7 +121,8 @@ export async function runUninstall(argv: string[]): Promise<void> {
   if (process.platform === "darwin") {
     console.log("  • podman machine (Linux VM):  podman machine stop && podman machine rm")
   }
-  console.log(`  • npx/bun cache:              rm -rf ${join(homedir(), ".npm", "_npx")}`)
+  console.log(`  • npm/npx cache:              rm -rf ${join(homedir(), ".npm", "_npx")}`)
+  console.log(`  • bun cache:                  rm -rf ${join(homedir(), ".bun")}`)
   console.log("")
 }
 
