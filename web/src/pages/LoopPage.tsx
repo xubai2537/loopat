@@ -163,10 +163,7 @@ function LoopMain({ meta }: { meta: LoopMeta }) {
     setEditorSelection(null)
     setOpenPanels((prev) => prev.includes("editor") ? prev : [...prev, "editor"])
   }
-  const handleTitleChanged = useCallback((title: string) => {
-    ws.updateLoopInPlace(meta.id, { title })
-  }, [meta.id, ws.updateLoopInPlace])
-  const { runtime, connected, reconnecting, running, viewers, extra, queue, onClearQueue } = useLoopRuntime(meta.id, ws.currentUser?.id ?? "", openFile, handleTitleChanged)
+  const { runtime, connected, reconnecting, running, viewers, extra, queue, onClearQueue } = useLoopRuntime(meta.id, ws.currentUser?.id ?? "", openFile)
 
   // Sandbox-prep gate: on first use, the per-loop image builds (mise toolchain
   // install / base-image pull). While it runs, terminal + chat aren't usable —
@@ -564,9 +561,16 @@ function LoopHeader({
           />
         ) : (
           <span
-            className={"text-[14px] md:text-[15px] font-medium text-gray-900 " + (canEditTitle ? "cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1" : "")}
+            className={
+              "text-[14px] md:text-[15px] font-medium px-1 -mx-1 rounded " +
+              // Auto-named titles render italic + lighter to signal "AI guessed
+              // this, you may want to fix it". One click on the title still
+              // opens rename inline.
+              (meta.titleAuto ? "text-gray-500 italic " : "text-gray-900 ") +
+              (canEditTitle ? "cursor-pointer hover:bg-gray-100" : "")
+            }
             onClick={() => { if (canEditTitle) { setTitleDraft(meta.title); setEditingTitle(true) } }}
-            title={canEditTitle ? "click to rename" : undefined}
+            title={canEditTitle ? (meta.titleAuto ? "auto-named · click to rename" : "click to rename") : undefined}
           >
             {meta.title}
           </span>
