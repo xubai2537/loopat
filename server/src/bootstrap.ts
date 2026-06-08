@@ -79,7 +79,7 @@ function checkClaudeBinary(): Check {
       hint:
         process.platform === "linux"
           ? "run `bun install` in the loopat repo root — SDK ships the binary as a platform-specific package"
-          : "the linux claude for the sandbox wasn't fetched (postinstall). Reinstall loopat, or run the `npm install --os=linux ...` command from the resolve error",
+          : "the linux claude for the sandbox wasn't fetched (postinstall). Reinstall loopat, or run the `bun add` / `npm install --os=linux ...` command from the resolve error",
     }
   }
 }
