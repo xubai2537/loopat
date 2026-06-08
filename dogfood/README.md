@@ -88,3 +88,43 @@ bun run dogfood:sync       # two-server context flow S0–S5 (release)
 
 Preconditions are enforced at config load (fail, never skip): `podman`,
 `git-crypt` (journey only), and the required env vars must all be present.
+
+## Case layout — one subdir per case
+
+Every case is its own directory with a `README.md` (purpose, steps, expectation)
+and a `journey.spec.ts`. New browser+AI journeys live in `case-<name>/` and run
+via `bun run dogfood:journeys`. Suites with their own globalSetup keep their own
+config (`first-run`, `sync`, `subagent-model`).
+
+### Browser+AI journeys (`case-*/`, `bun run dogfood:journeys`)
+| Case | Purpose |
+|------|---------|
+| case-reply | AI replies with a deterministic token in the chat UI |
+| case-memory | cross-turn context: 2nd turn recalls 1st-turn fact |
+| case-tooluse | AI writes a file, proven via sandbox podman exec |
+| case-rename | rename keeps chat history |
+| case-twoloops | two loops stay isolated |
+| case-gitcommit | AI commit verified by worktree git log |
+| case-gitdiff | git-status API shows AI's uncommitted change |
+| case-gitstage | git-stage API stages an AI-created file |
+| case-restart | session restart keeps history + still replies |
+| case-readfile | loop workdir is the seeded roster1 worktree |
+| case-secondmsg | two sequential turns both reply |
+| case-filestree | AI-created file appears in workdir listing |
+| case-distill | distill returns a summary of a real turn |
+| case-folder | AI creates a nested file (sandbox truth) |
+| case-archive | archive hides loop from sidebar; restore returns it |
+| case-multistep | one instruction chains read+write tools |
+| case-interrupt | loop recovers after mid-turn interrupt |
+| case-contextfiles | loop context endpoint responds |
+| case-context | context freshness: cached records versions, snapshot reproduces |
+| case-ai-extra | chat-history export + restart-session in one turn |
+
+### Standalone suites (own config)
+| Dir | Run |
+|-----|-----|
+| first-5-minutes | dogfood:smoke |
+| first-run | dogfood:journey |
+| sync | dogfood:sync |
+| subagent-model | dogfood:subagent |
+| attach-detach / concurrent-push / context-notes-sync / multi-turn-task / repos-page / second-loop-warm | dogfood |
