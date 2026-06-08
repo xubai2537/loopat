@@ -88,6 +88,7 @@ function metaToApi(meta: LoopMeta, opts: { withRuntime: boolean } = { withRuntim
     profiles: meta.config?.profiles ?? [],
     vault: meta.config?.vault ?? "default",
     repo: meta.repo ?? null,
+    versions: meta.versions ?? null,
   }
   if (opts.withRuntime) {
     const session = getSession(meta.id)
@@ -380,12 +381,22 @@ export function buildApiV1(): Hono<{ Variables: Variables }> {
       return apiError(c, 400, "invalid_request_error", "metadata_too_large", "metadata exceeds 16 KB")
     }
 
+    // context: freshness as pure git refs. string → applies to all; object →
+    // per-component { personal, knowledge, notes }. Omit → "HEAD" (cached, fast).
+    const ctxRaw = (body as any).context
+    const context = typeof ctxRaw === "string"
+      ? { personal: ctxRaw, knowledge: ctxRaw, notes: ctxRaw }
+      : (ctxRaw && typeof ctxRaw === "object")
+        ? { personal: ctxRaw.personal, knowledge: ctxRaw.knowledge, notes: ctxRaw.notes }
+        : undefined
+
     const meta = await internalCreateLoop({
       title: title || "untitled",
       createdBy: userId,
       profiles,
       vault,
       repo,
+      context,
     })
     if (metadata) {
       const patched = await patchLoopMeta(meta.id, { metadata })

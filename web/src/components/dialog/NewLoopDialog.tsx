@@ -14,7 +14,7 @@ export function NewLoopDialog({
   initialTitle,
 }: {
   onClose: () => void
-  onCreate: (opts: { title: string; repo?: string; profiles?: string[]; vault?: string }) => Promise<string> | string
+  onCreate: (opts: { title: string; repo?: string; profiles?: string[]; vault?: string; context?: string }) => Promise<string> | string
   initialTitle?: string
 }) {
   const [title, setTitle] = useState(initialTitle ?? "")
@@ -22,6 +22,9 @@ export function NewLoopDialog({
   const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(new Set())
   const [defaultProfileNames, setDefaultProfileNames] = useState<string[]>([])
   const [vault, setVault] = useState("default")
+  // Context freshness as a git ref. UI default = latest (origin/HEAD).
+  const [freshness, setFreshness] = useState<"latest" | "cached" | "custom">("latest")
+  const [customRef, setCustomRef] = useState("")
   const [repos, setRepos] = useState<ContextRepoSpec[]>([])
   const [profiles, setProfiles] = useState<ProfileEntry[]>([])
   const [vaults, setVaults] = useState<string[]>([])
@@ -91,11 +94,15 @@ export function NewLoopDialog({
     if (busy) return
     setBusy(true)
     try {
+      const context = freshness === "latest" ? "origin/HEAD"
+        : freshness === "cached" ? "HEAD"
+        : (customRef.trim() || "HEAD")
       await onCreate({
         title: title.trim() || "untitled",
         repo: repo || undefined,
         profiles: selectedProfiles.size > 0 ? [...selectedProfiles] : undefined,
         vault: vault || undefined,
+        context,
       })
     } finally {
       setBusy(false)
@@ -281,6 +288,25 @@ export function NewLoopDialog({
                 to isolate prod / test credentials.
               </div>
             )}
+          </DialogField>
+
+          <DialogField label="Context" hint="Which version of personal / knowledge / notes to load.">
+            <div className="flex flex-col gap-1">
+              {([
+                ["latest", "Latest", "Sync to newest — adds ~1-2s"],
+                ["cached", "Cached", "Use local copy — fastest, may be stale"],
+                ["custom", "Pin", "A git ref / commit — reproducible snapshot"],
+              ] as const).map(([val, label, desc]) => (
+                <label key={val} className={`flex items-start gap-2 px-1.5 py-1 rounded text-sm cursor-pointer hover:bg-gray-50 ${freshness === val ? "bg-blue-50" : ""}`}>
+                  <input type="radio" name="freshness" checked={freshness === val} onChange={() => setFreshness(val)} className="mt-0.5" />
+                  <span className="flex-1"><span className="font-medium text-gray-900">{label}</span><span className="block text-[11px] text-gray-500">{desc}</span></span>
+                </label>
+              ))}
+              {freshness === "custom" && (
+                <input type="text" value={customRef} onChange={(e) => setCustomRef(e.target.value)} placeholder="origin/main, a1b2c3d, v1.2…"
+                  className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded outline-none focus:border-gray-500" />
+              )}
+            </div>
           </DialogField>
 
         </form>

@@ -115,6 +115,8 @@ export type LoopMeta = {
    * context. Empty/absent = context set up cleanly.
    */
   contextWarnings?: string[]
+  /** Commit each context component was materialized at — pass back to reproduce. */
+  versions?: { personal: string | null; knowledge: string | null; notes: string | null }
   config?: {
     default_model?: string
     default_model_source?: "personal" | "workspace"
@@ -369,12 +371,16 @@ async function ensureContextRepo(dir: string, name: string, url?: string): Promi
  * interactive host-key prompt. Host-side git overrides that config via
  * GIT_SSH_COMMAND (env beats config), so the sandbox path is never used here.
  */
-export function ensureUserContext(user: string, vault: string = "default"): Promise<string[]> {
+/** Per-component git ref controlling context freshness. "HEAD" = local cache
+ *  (no fetch, fast); "origin/HEAD" = remote default (fetch); sha/tag = snapshot. */
+export type ContextRefs = { personal?: string; knowledge?: string; notes?: string }
+
+export function ensureUserContext(user: string, vault: string = "default", refs?: ContextRefs): Promise<string[]> {
   // Serialize per (user, vault) so concurrent loop create/attach/close don't
   // race on the same clone targets (see runExclusive).
-  return runExclusive(`ctx:${user}:${vault}`, () => _ensureUserContext(user, vault))
+  return runExclusive(`ctx:${user}:${vault}`, () => _ensureUserContext(user, vault, refs))
 }
-async function _ensureUserContext(user: string, vault: string): Promise<string[]> {
+async function _ensureUserContext(user: string, vault: string, refs?: ContextRefs): Promise<string[]> {
   return withSpan("_ensureUserContext", async (span) => {
   span.setAttribute("user", user)
   const errors: string[] = []
@@ -384,7 +390,7 @@ async function _ensureUserContext(user: string, vault: string): Promise<string[]
   // STRICT, per the context model: personal wins even when empty — an empty url
   // means the dir is REMOVED so the loop sees nothing (no fallback to any
   // workspace default). Returns whether the repo exists afterwards.
-  const ensurePerUserRepo = async (dir: string, url: string | undefined, label: string): Promise<boolean> => {
+  const ensurePerUserRepo = async (dir: string, url: string | undefined, label: string, ref?: string): Promise<boolean> => {
     if (!url) {
       try { await rm(dir, { recursive: true, force: true }) } catch {}
       return false
@@ -413,15 +419,19 @@ async function _ensureUserContext(user: string, vault: string): Promise<string[]
     // at $HOME/.ssh, so the AI's `git push` resolves the standard-named key +
     // config on its own (follow ssh standard, don't special-case). Host-side ops
     // here use GIT_SSH_COMMAND (sshEnv).
-    await execFileP("git", ["-C", dir, "fetch", "--quiet", "origin"], { env: sshEnv, timeout: 30_000 }).catch(() => {})
+    // Fetch only when this component wants newer than local (origin/HEAD or a
+    // pinned ref absent locally). "HEAD" = use the cache as-is → skip the 1-2s.
+    if (ref && ref !== "HEAD") {
+      await execFileP("git", ["-C", dir, "fetch", "--quiet", "origin"], { env: sshEnv, timeout: 30_000 }).catch(() => {})
+    }
     return true
   }
   // knowledge is the entry pointer (personal-declared url); clone it first, then
   // read ITS .loopat/config.json for the notes remote. The repo roster is
   // personal (cfg.repos), no longer inside the knowledge repo.
-  const hasKnowledge = await ensurePerUserRepo(personalKnowledgeDir(user), cfg.knowledge?.git, "knowledge")
+  const hasKnowledge = await ensurePerUserRepo(personalKnowledgeDir(user), cfg.knowledge?.git, "knowledge", refs?.knowledge)
   const kcfg = hasKnowledge ? await loadKnowledgeConfig(user) : { notes: undefined }
-  await ensurePerUserRepo(personalNotesDir(user), kcfg.notes?.git, "notes")
+  await ensurePerUserRepo(personalNotesDir(user), kcfg.notes?.git, "notes", refs?.notes)
   await writeReposManifest(personalReposDir(user), cfg.repos ?? [])
   if (errors.length) span.setAttribute("context.errors", errors.length)
   return errors
@@ -2067,14 +2077,14 @@ async function ensureSymlink(link: string, target: string) {
  * a symlink so the path still resolves — those loops can't publish, but
  * read access still works.
  */
-function ensureContextWorktree(repo: string, path: string, branchName: string): Promise<void> {
+function ensureContextWorktree(repo: string, path: string, branchName: string, startRef?: string): Promise<void> {
   // Serialize per MAIN repo (not per path): `git worktree add` takes a lock on
   // the main repo, so two concurrent adds from the same repo — even to
   // different paths — can collide. Same-path races still hit the early-return
   // idempotency inside (see runExclusive).
-  return runExclusive(`wt:${repo}`, () => _ensureContextWorktree(repo, path, branchName))
+  return runExclusive(`wt:${repo}`, () => _ensureContextWorktree(repo, path, branchName, startRef))
 }
-async function _ensureContextWorktree(repo: string, path: string, branchName: string) {
+async function _ensureContextWorktree(repo: string, path: string, branchName: string, startRef?: string) {
   let stats: Awaited<ReturnType<typeof lstat>> | null = null
   try { stats = await lstat(path) } catch {}
   // Real dir with .git → already a worktree, leave it alone.
@@ -2090,9 +2100,11 @@ async function _ensureContextWorktree(repo: string, path: string, branchName: st
   // Stale state (old symlink, empty dir, leftover from manual cleanup) → wipe + create.
   try { await rm(path, { recursive: true, force: true }) } catch {}
   try { await execFileP("git", ["-C", repo, "worktree", "prune"]) } catch {}
-  // ① pull (docs/context-flow.md): open the worktree from origin's default
-  // branch so the loop starts from latest consensus, not a stale local HEAD.
-  const start = await remoteStartPoint(repo)
+  // Start point honors the requested context ref:
+  //   "HEAD" / undefined → local clone as-is, no fetch (fast, maybe stale)
+  //   "origin/HEAD"      → fetch + origin's default branch (latest consensus)
+  //   <sha>/tag/origin/* → fetch if missing, pin exactly (snapshot)
+  const start = await resolveContextStart(repo, startRef)
   // -B (not -b): reset the branch if it lingers from a removed worktree, so a
   // rebuild always re-opens cleanly from the start point.
   // No start point → `worktree add -B <branch> <path>` tries to seed the new
@@ -2163,6 +2175,25 @@ async function remoteDefaultBranch(dir: string): Promise<string> {
   return "main"
 }
 
+/**
+ * Resolve a worktree start point from a context ref. Pure git, no reserved
+ * words. "HEAD"/undefined → local HEAD (no fetch). "origin/HEAD" → remote
+ * default (fetch). Anything else (sha/tag/origin/<branch>) → pin it, fetching
+ * once if it isn't present locally. Returns null when nothing resolves (→ orphan).
+ */
+async function resolveContextStart(repo: string, ref?: string, sshCommand?: string): Promise<string | null> {
+  const r = (ref ?? "HEAD").trim()
+  if (r === "origin/HEAD") return remoteStartPoint(repo, sshCommand)
+  if (r === "HEAD" || r === "") {
+    return execFileP("git", ["-C", repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).then(() => "HEAD").catch(() => null)
+  }
+  const verify = () => execFileP("git", ["-C", repo, "rev-parse", "--verify", "--quiet", `${r}^{commit}`]).then(() => true).catch(() => false)
+  if (await verify()) return r
+  const env = sshCommand ? { ...process.env, GIT_SSH_COMMAND: sshCommand } : process.env
+  await execFileP("git", ["-C", repo, "fetch", "--quiet", "origin"], { env, timeout: 30_000 }).catch(() => {})
+  return (await verify()) ? r : null
+}
+
 async function remoteStartPoint(repo: string, sshCommand?: string): Promise<string | null> {
   try {
     await execFileP("git", ["-C", repo, "remote", "get-url", "origin"])
@@ -2187,28 +2218,28 @@ async function remoteStartPoint(repo: string, sshCommand?: string): Promise<stri
  * user declared no remote for this context — see ensureUserContext's strict
  * rule), the loop gets an EMPTY dir, never a fallback to a workspace default.
  */
-async function ensurePerUserContextWorktree(repo: string, path: string, branch: string) {
+async function ensurePerUserContextWorktree(repo: string, path: string, branch: string, startRef?: string) {
   if (!existsSyncBase(join(repo, ".git"))) {
     try { await rm(path, { recursive: true, force: true }) } catch {}
     await mkdir(path, { recursive: true })
     return
   }
-  await ensureContextWorktree(repo, path, branch)
+  await ensureContextWorktree(repo, path, branch, startRef)
 }
 
-export async function ensureContextMounts(id: string, createdBy: string) {
+export async function ensureContextMounts(id: string, createdBy: string, refs?: ContextRefs) {
   return withSpan("ensureContextMounts", async () => {
   await mkdir(loopContextDir(id), { recursive: true })
   // knowledge / notes are per-user (cloned by ensureUserContext from the user's
   // personal-declared remotes). Each worktree opens from origin/main — a fresh
   // pull of consensus; the local main repo is just the fetch cache + worktree
   // host (docs/context-flow.md). Empty when the user declared no remote.
-  await ensurePerUserContextWorktree(personalKnowledgeDir(createdBy), loopContextKnowledge(id), `loop/${id}`)
-  await ensurePerUserContextWorktree(personalNotesDir(createdBy), loopContextNotes(id), `loop/${id}`)
+  await ensurePerUserContextWorktree(personalKnowledgeDir(createdBy), loopContextKnowledge(id), `loop/${id}`, refs?.knowledge)
+  await ensurePerUserContextWorktree(personalNotesDir(createdBy), loopContextNotes(id), `loop/${id}`, refs?.notes)
   // personal is also a per-loop worktree — same shape, wired to the user's
   // private remote. ensureContextWorktree falls back to a symlink when
   // personal/ isn't a git repo yet.
-  await ensureContextWorktree(personalDir(createdBy), loopContextPersonal(id), `loop/${id}`)
+  await ensureContextWorktree(personalDir(createdBy), loopContextPersonal(id), `loop/${id}`, refs?.personal)
   await mkdir(personalReposDir(createdBy), { recursive: true })
   await ensureSymlink(loopContextRepos(id), personalReposDir(createdBy))
   }) // end withSpan
@@ -2253,7 +2284,14 @@ export async function createLoop(opts: {
   vault?: string
   knowledgeRw?: boolean
   mountAllLoops?: boolean
+  /** Per-component git ref for context freshness; default "HEAD" (cached, fast). */
+  context?: ContextRefs
 }): Promise<LoopMeta> {
+  const refs: ContextRefs = {
+    personal: opts.context?.personal ?? "HEAD",
+    knowledge: opts.context?.knowledge ?? "HEAD",
+    notes: opts.context?.notes ?? "HEAD",
+  }
   await ensureWorkspaceDirs()
   const id = randomUUID()
   const createdAt = new Date().toISOString()
@@ -2287,7 +2325,7 @@ export async function createLoop(opts: {
 
     // Pull the per-user knowledge/notes FIRST: clones the user's knowledge repo
     // and reads its .loopat/config.json for the notes remote + repo roster.
-    const ctxWarnings = await ensureUserContext(opts.createdBy, opts.vault ?? "default").catch(
+    const ctxWarnings = await ensureUserContext(opts.createdBy, opts.vault ?? "default", refs).catch(
       (e: any) => { console.warn(`[loopat] ensureUserContext(${opts.createdBy}): ${e?.message ?? e}`); return [`context init failed: ${e?.message ?? e}`] },
     )
     if (ctxWarnings.length) meta.contextWarnings = ctxWarnings
@@ -2317,11 +2355,24 @@ export async function createLoop(opts: {
       await mkdir(loopWorkdir(id), { recursive: true })
     }
 
-    await ensureContextMounts(id, effectiveDriver(meta))
+    await ensureContextMounts(id, effectiveDriver(meta), refs)
+
+    // Record the exact commit each context worktree landed on, so a snapshot
+    // loop can be reproduced by passing these shas back as context refs.
+    meta.versions = {
+      personal: await worktreeHead(loopContextPersonal(id)),
+      knowledge: await worktreeHead(loopContextKnowledge(id)),
+      notes: await worktreeHead(loopContextNotes(id)),
+    }
 
     await writeFile(loopMetaPath(id), JSON.stringify(meta, null, 2))
     return meta
   })
+}
+
+/** Short HEAD sha of a context worktree, or null when empty/absent. */
+async function worktreeHead(dir: string): Promise<string | null> {
+  return execFileP("git", ["-C", dir, "rev-parse", "--short", "HEAD"]).then((r) => r.stdout.trim()).catch(() => null)
 }
 
 /**

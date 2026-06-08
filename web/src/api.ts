@@ -444,6 +444,9 @@ export async function createLoop(opts: {
    *  Empty/undefined = base + personal CLAUDE.md only, no plugins. */
   profiles?: string[]
   vault?: string
+  /** Context freshness as a git ref: "HEAD" (cached), "origin/HEAD" (latest),
+   *  or a sha/tag (snapshot). Applies to personal/knowledge/notes. */
+  context?: string
   /** Admin-only flags — still go via the internal `/api/loops` endpoint;
    *  v1 doesn't surface them. */
   knowledgeRw?: boolean
@@ -476,6 +479,7 @@ export async function createLoop(opts: {
       profiles: opts.profiles,
       vault: opts.vault,
       repo: opts.repo,
+      context: opts.context,
     }),
   })
   if (!r.ok) throw new Error(`createLoop failed (${r.status})`)
