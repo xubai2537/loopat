@@ -3248,18 +3248,13 @@ initChat(chatSeed)
 // instant, instead of silently triggering a multi-minute image build when the
 // user least expects it. When the image is already built (steady state, and
 // `bun --hot` dev), these steps return immediately.
-const bootReady = await printBootstrapBanner(cfg)
-console.log(`[loopat] v${rootPkg.version}`)
 
+// Probe podman and fetch the sandbox claude binary before the bootstrap
+// banner so the claude binary check reflects reality instead of showing a
+// false-negative on first boot.
 const podmanProbe = await probePodman()
 if (podmanProbe.ok) {
   console.log(`[loopat] sandbox runtime: ${podmanProbe.version}`)
-} else {
-  console.warn(`[loopat] sandbox runtime: NOT AVAILABLE — ${podmanProbe.hint}`)
-  console.warn(`[loopat] podman is required — install it, then restart loopat (chat / terminal need it).`)
-}
-
-if (podmanProbe.ok) {
   // On a non-linux host the sandbox needs a linux claude that npm/npx didn't
   // install (npx skips postinstall scripts) — fetch it now (skipped once
   // present / on a linux host).
@@ -3268,6 +3263,15 @@ if (podmanProbe.ok) {
   } catch (e: any) {
     console.warn(`[loopat] sandbox claude fetch failed: ${e?.message ?? e}; sandbox AI won't run until fixed`)
   }
+} else {
+  console.warn(`[loopat] sandbox runtime: NOT AVAILABLE — ${podmanProbe.hint}`)
+  console.warn(`[loopat] podman is required — install it, then restart loopat (chat / terminal need it).`)
+}
+
+const bootReady = await printBootstrapBanner(cfg)
+console.log(`[loopat] v${rootPkg.version}`)
+
+if (podmanProbe.ok) {
   // Build the sandbox base image now so the first loop opens instantly. Skips
   // immediately when the image for this Containerfile already exists.
   try {

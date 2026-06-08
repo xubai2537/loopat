@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.165"
+  }
+}
