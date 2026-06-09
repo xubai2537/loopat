@@ -425,10 +425,10 @@ class LoopSession {
     // Per-loop egress gateway: claude → gateway (plaintext over bridge) →
     // provider (https). Records full req/resp to trace.jsonl. Lives with the
     // session; reachable from the sandbox at host.containers.internal:<port>.
-    if (process.env.LOOPAT_EGRESS_TRACE) {
-      if (!this.gateway) this.gateway = startLoopGateway(loopId, extraEnv.ANTHROPIC_BASE_URL ?? provider.baseUrl)
-      extraEnv.ANTHROPIC_BASE_URL = `http://host.containers.internal:${this.gateway.port}`
-    }
+    // Always route through the gateway (future remap/usage/audit home); trace
+    // to disk only when LOOPAT_EGRESS_TRACE — otherwise pure transparent hop.
+    if (!this.gateway) this.gateway = startLoopGateway(loopId, extraEnv.ANTHROPIC_BASE_URL ?? provider.baseUrl, !!process.env.LOOPAT_EGRESS_TRACE)
+    extraEnv.ANTHROPIC_BASE_URL = `http://host.containers.internal:${this.gateway.port}`
 
     let modelId: string | undefined = meta.config?.default_model_id
     if (!modelId) {

@@ -17,7 +17,7 @@ import { loopTracePath } from "./paths"
 export type LoopGateway = { port: number; stop: () => void }
 
 /** Start a gateway for one loop, forwarding to `upstream` (provider baseUrl). */
-export function startLoopGateway(loopId: string, upstream: string): LoopGateway {
+export function startLoopGateway(loopId: string, upstream: string, trace = false): LoopGateway {
   const base = upstream.replace(/\/+$/, "")
   const server = Bun.serve({
     hostname: "0.0.0.0",
@@ -32,17 +32,23 @@ export function startLoopGateway(loopId: string, upstream: string): LoopGateway 
       const reqBody = req.method === "POST" ? await req.clone().text() : ""
       // Drop hop headers — forwarding Host: host.containers.internal upstream
       // makes the provider 404. Let fetch set Host from the target.
-      const fwd = new Headers(req.headers); fwd.delete("host"); fwd.delete("content-length"); fwd.delete("accept-encoding")
+      // Allowlist only the headers the provider needs — claude sends extras
+      // (accept-encoding, connection, …) that trip idealab through a proxy.
+      const fwd = new Headers()
+      for (const h of ["content-type", "x-api-key", "authorization", "anthropic-version", "anthropic-beta", "user-agent"]) {
+        const v = req.headers.get(h); if (v) fwd.set(h, v)
+      }
       let res: Response
       try {
         res = await fetch(target, { method: req.method, headers: fwd, body: req.method === "POST" ? reqBody : undefined, tls: { rejectUnauthorized: false } } as any)
+        if (res.status >= 500 && req.method === "POST") { res = await fetch(target, { method: req.method, headers: fwd, body: reqBody, tls: { rejectUnauthorized: false } } as any) } // one retry on upstream 5xx
       } catch (e: any) {
         await record(loopId, { turn, hasKey: !!key, keyPrefix: key.slice(0, 4), method: req.method, target, status: 0, durMs: Date.now() - t0, error: String(e?.message ?? e), reqBody: trunc(reqBody) })
         return new Response(JSON.stringify({ error: "gateway upstream failed" }), { status: 502 })
       }
       // Tee: clone for the trace (async, non-blocking), stream original to loop
       // so SSE passes through unbuffered. Drop content-encoding (we un-gzip'd).
-      res.clone().text().then((b) => record(loopId, { turn, hasKey: !!key, keyPrefix: key.slice(0, 4), method: req.method, target, status: res.status, durMs: Date.now() - t0, reqBody: trunc(reqBody), respBody: trunc(b) })).catch(() => {})
+      if (trace) res.clone().text().then((b) => record(loopId, { turn, hasKey: !!key, keyPrefix: key.slice(0, 4), method: req.method, target, status: res.status, durMs: Date.now() - t0, reqBody: trunc(reqBody), respBody: trunc(b) })).catch(() => {})
       const out = new Headers(res.headers); out.delete("content-encoding"); out.delete("content-length")
       return new Response(res.body, { status: res.status, headers: out })
     },
